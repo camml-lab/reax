@@ -9,6 +9,7 @@ from . import (
     metrics,
     modules,
     optimizers,
+    profilers,
     random,
     saving,
     stages,
@@ -24,6 +25,7 @@ from .loggers import Logger
 from .metrics import Metric
 from .modules import *
 from .optimizers import *
+from .profilers import Profiler
 from .random import *
 from .random import seed_everything
 from .saving import *
@@ -48,17 +50,19 @@ __all__ = (
         "stages",
         "listeners",
         "metrics",
+        "profilers",
         "strategies",
         "testing",
         "types",
     )
     # Classes/functions/variables
     + (
-        "Metric",
         "DataLoader",
         "DataModule",
         "ReaxDataLoader",
         "Logger",
+        "Metric",
+        "Profiler",
         "seed_everything",
         "Stage",
     )

@@ -55,7 +55,8 @@ class Trainer(stages.StageListener, _deprecated.TrainerDeprecatedMixin):
         deterministic: bool = False,
         rngs: nnx.Rngs = None,
         default_root_dir: "reax.types.Path | None" = None,
-        checkpointing: "reax.Checkpointing" = None,
+        checkpointing: "reax.Checkpointing | None" = None,
+        profiler: "reax.Profiler | None" = None,
     ):
         """Init function."""
         # Params
@@ -79,6 +80,7 @@ class Trainer(stages.StageListener, _deprecated.TrainerDeprecatedMixin):
             deterministic=deterministic,
             rngs=rngs,
             default_root_dir=default_root_dir,
+            profiler=profiler,
         )
 
         self._current_epoch: int = 0
@@ -144,6 +146,10 @@ class Trainer(stages.StageListener, _deprecated.TrainerDeprecatedMixin):
     @property
     def rngs(self) -> nnx.Rngs:
         return self._engine.rngs
+
+    @property
+    def profiler(self) -> "reax.Profiler":
+        return self._engine.profiler
 
     @property
     def is_global_zero(self) -> bool:
@@ -601,7 +607,7 @@ class Trainer(stages.StageListener, _deprecated.TrainerDeprecatedMixin):
         """Run stage."""
         with self.engine.default_device():
             try:
-                with self._attach(stage):
+                with self._attach(stage), self.engine.profile(stage.name):
                     with stage.events.listen_context(self):
                         stage.run()
             except KeyboardInterrupt as exc:

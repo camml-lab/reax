@@ -2,7 +2,7 @@ import contextlib
 import functools
 import logging
 import os
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Final, TypeVar
 import weakref
 
 import beartype
@@ -14,12 +14,14 @@ import jaxtyping as jt
 from . import data as data_
 from . import hooks
 from . import loggers as loggers_
-from . import modules, optimizers, strategies
+from . import modules, optimizers, profilers, strategies
 from .data import DeviceDataLoader
 from .training import _logger_connector
 from .utils import events
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     import reax
 
 __all__ = ("Engine",)
@@ -57,6 +59,7 @@ class Engine:
         deterministic: bool = False,
         rngs: nnx.Rngs = None,
         default_root_dir: "reax.types.Path | None" = None,
+        profiler: "reax.Profiler | str | None" = None,
     ):
         """
         Initializes the Engine with execution parameters and components.
@@ -107,6 +110,7 @@ class Engine:
         self._rngs = rngs if rngs is not None else nnx.Rngs(0)
         self._loggers: list[loggers_.Logger] = _init_loggers(logger, self.default_root_dir)
         self._logging = _logger_connector.TrainerLogging()
+        self._profiler: profilers.Profiler = _init_profiler(profiler)
 
         if isinstance(listeners, hooks.TrainerListener):
             listeners = [listeners]
@@ -122,6 +126,7 @@ class Engine:
         """
         self._events = None
         self._loggers = None
+        self._profiler = None
 
     @property
     def default_root_dir(self) -> str:
@@ -151,7 +156,7 @@ class Engine:
         return self._loggers[0]
 
     @property
-    def loggers(self) -> list["reax.Logger"]:
+    def loggers(self) -> "list[reax.Logger]":
         """
         Get all the loggers configured for the Engine.
 
@@ -161,7 +166,7 @@ class Engine:
         return self._loggers
 
     @loggers.setter
-    def loggers(self, loggers: list["reax.Logger"] | None) -> None:
+    def loggers(self, loggers: "list[reax.Logger] | None") -> None:
         """
         Set the list of loggers.
 
@@ -189,6 +194,18 @@ class Engine:
             strategies.Strategy: The underlying strategy object.
         """
         return self._strategy
+
+    @property
+    def profiler(self) -> "reax.Profiler":
+        """
+        Get the profiler that can be used to annotate and time parts sections of code
+        """
+        return weakref.proxy(self._profiler)
+
+    @contextlib.contextmanager
+    def profile(self, profile_name: str, **kwargs):
+        with self._profiler.profile(profile_name, **kwargs):
+            yield self.profiler
 
     @property
     def is_global_zero(self) -> bool:
@@ -448,6 +465,22 @@ def _init_loggers(
         return []
 
     return list(logger)
+
+
+def _init_profiler(profiler: "reax.Profiler | str | None" = None) -> "reax.Profiler":
+    PROFILERS: Final[dict[str, type(profilers.Profiler)]] = {
+        "dummy": profilers.DummyProfiler,
+        "jax": profilers.JaxProfiler,
+    }
+
+    if profiler is None:
+        return profilers.DummyProfiler()
+
+    if isinstance(profiler, str):
+        profiler_cls = PROFILERS[profiler]
+        return profiler_cls()
+
+    return profiler
 
 
 def _is_local_file_protocol(path: "reax.types.Path") -> bool:
