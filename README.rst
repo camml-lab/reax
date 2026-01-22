@@ -104,27 +104,35 @@ Define the training workflow. Here's a toy example:
 
         def configure_model(self, stage: reax.Stage, batch, /):
             if self.parameters() is None:
-                x = batch[0].reshape(len(batch[0]), -1)
+                # Prepare example batch for initialization
+                x, _ = batch
+                x = x.reshape(x.shape[0], -1)
+                # Initialize Flax Linen model with RNGs and example input
                 params = self.ae.init(self.rngs(), x)
                 self.set_parameters(params)
 
-        def __call__(self, *args, **kwargs):
-            return self.forward(*args, **kwargs)
-
-        def forward(self, x):
-            embedding = jax.jit(self.ae.encoder.apply)(self.parameters()["params"]["encoder"], x)
-            return embedding
+        def __call__(self, x):
+            # Use the full autoencoder model for forward pass
+            return self.ae.apply(self.parameters(), x)
 
         def training_step(self, batch, batch_idx):
-            x = batch[0].reshape(len(batch[0]), -1)
-            loss, grads = jax.value_and_grad(self.loss_fn, argnums=0)(self.parameters(), x, self.ae)
+            x, _ = batch
+            x = x.reshape(x.shape[0], -1)
+            # Static method receives params, data, and model apply function
+            loss, grads = jax.value_and_grad(self.loss_fn, argnums=0)(
+                self.parameters(), x, self.ae.apply
+            )
             self.log("train_loss", loss, on_step=True, prog_bar=True)
             return loss, grads
 
         @staticmethod
         @partial(jax.jit, static_argnums=2)
-        def loss_fn(params, x, model):
-            predictions = model.apply(params, x)
+        def loss_fn(params, x, apply_fn):
+            """Compute reconstruction loss.
+
+            Static method for JIT compilation. Receives parameters and apply function.
+            """
+            predictions = apply_fn(params, x)
             return optax.losses.squared_error(predictions, x).mean()
 
         def configure_optimizers(self):

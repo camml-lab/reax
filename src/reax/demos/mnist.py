@@ -69,8 +69,8 @@ class MnistDataset(Sequence[tuple[jax.Array, jax.Array]]):
         label_file = f"{'train' if self.train else 't10k'}-labels-idx1-ubyte.gz"
 
         return reax.data.ArrayDataset(
-            self.parse_images(path.join(self.downloads_dir, image_file)),
-            self.parse_labels(path.join(self.downloads_dir, label_file)),
+            parse_images(path.join(self.downloads_dir, image_file)),
+            parse_labels(path.join(self.downloads_dir, label_file)),
         )
 
     def __getitem__(self, index: int) -> tuple[jax.Array, jax.Array]:
@@ -130,27 +130,6 @@ class MnistDataset(Sequence[tuple[jax.Array, jax.Array]]):
         if not path.isfile(out_file):
             urllib.request.urlretrieve(url, out_file)  # nosec
             print(f"downloaded {url} to {save_dir}")
-
-    @staticmethod
-    def parse_labels(filename) -> np.ndarray:
-        with gzip.open(filename, "rb") as fh:
-            _ = struct.unpack(">II", fh.read(8))
-            labels = np.array(array.array("B", fh.read()), dtype=np.uint8)
-
-            # Create a one-hot encoding of x of size k
-            labels = np.array(labels[:, None] == np.arange(10), dtype=np.int32)
-            return labels
-
-    @staticmethod
-    def parse_images(filename) -> np.ndarray:
-        with gzip.open(filename, "rb") as fh:
-            _, num_data, rows, cols = struct.unpack(">IIII", fh.read(16))
-            # pylint: disable=too-many-function-args
-            img = np.array(array.array("B", fh.read()), dtype=np.uint8).reshape(
-                num_data, rows, cols
-            )
-            # Flatten all but the first dimension of an ndarray
-            return np.reshape(img, (img.shape[0], -1)) / np.float32(255.0)
 
 
 class MnistDataModule(reax.DataModule):
@@ -289,13 +268,13 @@ class MnistDataModule(reax.DataModule):
         # load and split datasets only if not loaded already
         if not self.data_train and not self.data_val and not self.data_test:
             trainset = reax.data.ArrayDataset(
-                self.parse_images(path.join(self.downloads_dir, "train-images-idx3-ubyte.gz")),
-                self.parse_labels(path.join(self.downloads_dir, "train-labels-idx1-ubyte.gz")),
+                parse_images(path.join(self.downloads_dir, "train-images-idx3-ubyte.gz")),
+                parse_labels(path.join(self.downloads_dir, "train-labels-idx1-ubyte.gz")),
             )
 
             testset = reax.data.ArrayDataset(
-                self.parse_images(path.join(self.downloads_dir, "t10k-images-idx3-ubyte.gz")),
-                self.parse_labels(path.join(self.downloads_dir, "t10k-labels-idx1-ubyte.gz")),
+                parse_images(path.join(self.downloads_dir, "t10k-images-idx3-ubyte.gz")),
+                parse_labels(path.join(self.downloads_dir, "t10k-labels-idx1-ubyte.gz")),
             )
 
             dataset = reax.data.ConcatDataset([trainset, testset])
@@ -355,26 +334,25 @@ class MnistDataModule(reax.DataModule):
             urllib.request.urlretrieve(url, out_file)  # nosec
             print(f"downloaded {url} to {save_dir}")
 
-    @staticmethod
-    def parse_labels(filename) -> np.ndarray:
-        with gzip.open(filename, "rb") as fh:
-            _ = struct.unpack(">II", fh.read(8))
-            labels = np.array(array.array("B", fh.read()), dtype=np.uint8)
 
-            # Create a one-hot encoding of x of size k
-            labels = np.array(labels[:, None] == np.arange(10), dtype=np.int32)
-            return labels
+def parse_labels(filename) -> np.ndarray:
+    with gzip.open(filename, "rb") as fh:
+        _ = struct.unpack(">II", fh.read(8))
+        labels = np.array(array.array("B", fh.read()), dtype=np.uint8)
 
-    @staticmethod
-    def parse_images(filename) -> np.ndarray:
-        with gzip.open(filename, "rb") as fh:
-            _, num_data, rows, cols = struct.unpack(">IIII", fh.read(16))
-            # pylint: disable=too-many-function-args
-            img = np.array(array.array("B", fh.read()), dtype=np.uint8).reshape(
-                num_data, rows, cols
-            )
-            # Flatten all but the first dimension of an ndarray
-            return np.reshape(img, (img.shape[0], -1)) / np.float32(255.0)
+        # Create a one-hot encoding of x of size k
+        # labels = np.array(labels[:, None] == np.arange(10), dtype=np.int32)
+        return labels
+
+
+def parse_images(filename) -> np.ndarray:
+    with gzip.open(filename, "rb") as fh:
+        _, num_data, rows, cols = struct.unpack(">IIII", fh.read(16))
+        # pylint: disable=too-many-function-args
+        img = np.array(array.array("B", fh.read()), dtype=np.uint8).reshape(num_data, rows, cols)
+        # Flatten all but the first dimension of an ndarray
+        # todo: return np.reshape(img, (img.shape[0], -1)) / np.float32(255.0)
+        return img / np.float32(255.0)
 
 
 if __name__ == "__main__":

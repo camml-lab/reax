@@ -79,5 +79,10 @@ local/
 
 # DOCS
 docs/build/
-docs/source/starting/data/
-.gemini/
+docs/source/get_started/data/
+
+/docs/build/
+/docs/*/data/
+
+reax_logs/
+/.gemini/

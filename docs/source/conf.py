@@ -50,6 +50,7 @@ autoclass_content = "both"
 # ones.
 extensions = [
     "sphinx.ext.autodoc",
+    "sphinx.ext.autosummary",
     "sphinx.ext.napoleon",  # for NumPy/Google style docstrings
     "sphinx.ext.doctest",
     "sphinx.ext.coverage",

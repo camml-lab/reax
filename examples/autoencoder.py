@@ -44,21 +44,29 @@ class ReaxAutoEncoder(reax.Module):
         self._learning_rate = learning_rate
 
     def configure_model(self, _stage: "reax.Stage", batch: Any, /) -> None:
+        """Initialise model parameters using example batch.
+
+        For Flax Linen models, we use model.init(rngs, example_input) to get parameters,
+        which are then stored via set_parameters() for use in training.
+        """
         if self.parameters() is None:
             inputs = self._prepare_batch(batch)
+            # Flax Linen: Initialize with RNGs and example input
             params = self.autoencoder.init(self.rngs(), inputs)
             self.set_parameters(params)
 
-    def __call__(self, *args, **kwargs):
-        return self.forward(*args, **kwargs)
+    def __call__(self, x):
+        """Forward pass through the autoencoder.
 
-    def forward(self, x):
+        For Flax Linen, we use model.apply(params, input) for forward passes.
+        """
         return self.autoencoder.apply(self.parameters(), x)
 
     def training_step(self, batch, batch_idx, /):
         x = self._prepare_batch(batch)
+        # Pass apply function to static method for JIT compilation
         loss, grads = jax.value_and_grad(self.loss_fn, argnums=0)(
-            self.parameters(), x, self.autoencoder
+            self.parameters(), x, self.autoencoder.apply
         )
 
         self.log("train_loss", loss, on_step=True, prog_bar=True)
@@ -66,18 +74,37 @@ class ReaxAutoEncoder(reax.Module):
 
     def validation_step(self, batch, batch_idx: int, /):
         x = self._prepare_batch(batch)
-        loss = self.loss_fn(self.parameters(), x, self.autoencoder)
+        loss = self.loss_fn(self.parameters(), x, self.autoencoder.apply)
         self.log("val_loss", loss, on_step=True, prog_bar=True)
 
     def test_step(self, batch, batch_idx: int, /):
         x = self._prepare_batch(batch)
-        loss = self.loss_fn(self.parameters(), x, self.autoencoder)
+        loss = self.loss_fn(self.parameters(), x, self.autoencoder.apply)
         self.log("test_loss", loss, on_step=True, prog_bar=True)
 
     @staticmethod
     @functools.partial(jax.jit, static_argnums=2)
-    def loss_fn(params, x, model):
-        predictions = model.apply(params, x)
+    def loss_fn(params, x, apply_fn):
+        """Compute reconstruction loss.
+
+        Static method for JIT compilation. Receives parameters and apply function.
+        This pattern allows jax.jit to work correctly.
+
+        Parameters
+        ----------
+        params : PyTree
+            Model parameters
+        x : Array
+            Input data
+        apply_fn : Callable
+            The model's apply function (e.g., model.apply)
+
+        Returns
+        -------
+        Array
+            Mean squared error loss
+        """
+        predictions = apply_fn(params, x)
         return optax.losses.squared_error(predictions, x).mean()
 
     def configure_optimizers(self):
