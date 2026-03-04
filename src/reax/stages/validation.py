@@ -37,6 +37,11 @@ class Validate(stages.EpochStage):
             enable_checkpointing=enable_checkpointing,
         )
 
+    @property
+    def epoch(self) -> int:
+        """Get the current epoch."""
+        return self._run_count if self.parent is None else self.parent.epoch
+
     @override
     def _on_starting(self):
         super()._on_starting()
