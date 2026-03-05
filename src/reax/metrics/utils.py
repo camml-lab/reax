@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from typing import TYPE_CHECKING, ClassVar, Optional, Protocol, TypeVar
+from typing import TYPE_CHECKING, ClassVar, Protocol, TypeVar
 
 import beartype
 import clu.internal.utils
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 __all__ = tuple()
 
 M = TypeVar("M", bound=Metric)
-OptionalMask = Optional["reax.types.ArrayMask"]
+OptionalMask = types.ArrayMask | None
 
 
 class ReduceFn(Protocol):
