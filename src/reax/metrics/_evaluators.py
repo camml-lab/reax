@@ -1,7 +1,7 @@
 """Metrics evaluators"""
 
 import abc
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 import equinox as eqx
 import jax
@@ -17,28 +17,21 @@ T = TypeVar("T", bound="reax.Metric")
 
 class MetricEvaluator(abc.ABC, eqx.Module):
     @abc.abstractmethod
-    def create(self, metric: T, batch: Any, **kwargs) -> T:
+    def create(self, metric: T, *args, **kwargs) -> T:
         """Evaluate the metric creating a new instance"""
 
 
 class DefaultEvaluator(MetricEvaluator):
     @override
-    def create(self, metric: T, batch: Any, **kwargs) -> T:
-        if isinstance(batch, tuple):
-            return metric.create(*batch, **kwargs)
-
-        return metric.create(batch, **kwargs)
+    def create(self, metric: T, *args, **kwargs) -> T:
+        return metric.create(*args, **kwargs)
 
 
 class VmapEvaluator(MetricEvaluator):
     @override
-    def create(self, metric: T, batch: Any, **kwargs) -> T:
+    def create(self, metric: T, *args, **kwargs) -> T:
         # 1. Compute the metric for the whole batch in parallel
-        create_fn = metric.create
-        if isinstance(batch, tuple):
-            batched_instance = jax.vmap(create_fn)(*batch, **kwargs)
-        else:
-            batched_instance = jax.vmap(create_fn)(batch, **kwargs)
+        batched_instance = jax.vmap(metric.create)(*args, **kwargs)
 
         # 2. Re-use the metric's own reduction logic to collapse the batch dim
         return batched_instance.reduce(axis=0)

@@ -61,7 +61,11 @@ class EvaluateStats(stages.EpochStage):
         # Calculate and log all the stats
         for name, stat in self._stats.items():
             try:
-                calculated = self._evaluator.create(stat, self.batch)
+                if isinstance(self.batch, tuple):
+                    calculated = stat.create(*self.batch)
+                else:
+                    calculated = stat.create(self.batch)
+
                 self.log(name, calculated, on_step=False, on_epoch=True, logger=True)
 
             except exceptions.DataNotFound:

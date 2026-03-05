@@ -253,13 +253,13 @@ def test_least_squares_vmap_reduction(rng_key):
     # 2. Compute via Vmap (This tests your custom reduce_fn)
     # vmap(create) produces values of shape (4, 10, 3)
     # reduce(axis=0) should turn it into (40, 3)
-    vmapped_metric = vmap_eval.create(ls_metric, (inputs, outputs))
+    vmapped_metric = vmap_eval.create(ls_metric, inputs, outputs)
 
     # 3. Compute via Default (The 'Ground Truth')
     # Reshape manually to compare
     flat_inputs = inputs.reshape(-1, n_features)
     flat_outputs = outputs.reshape(-1, 1)
-    standard_metric = default_eval.create(ls_metric, (flat_inputs, flat_outputs))
+    standard_metric = default_eval.create(ls_metric, flat_inputs, flat_outputs)
 
     # 4. Assertions
     # Check shapes first - this is where the reduce_fn usually fails
