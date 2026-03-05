@@ -6,6 +6,7 @@ import equinox
 import flax.core
 import jaxtyping as jt
 
+from . import _evaluators
 from . import _metric as metric_
 
 if TYPE_CHECKING:
@@ -20,11 +21,17 @@ class MetricCollection(equinox.Module):
     """A collection of metrics that can be created/updated/merged using a single call."""
 
     _metrics: flax.core.FrozenDict[str, "reax.Metric"]
+    _evaluator: "reax.metrics.MetricEvaluator"
 
     @jt.jaxtyped(typechecker=beartype.beartype)
-    def __init__(self, metrics: "reax.Metric | Sequence[reax.Metric] | dict[str, reax.Metric]"):
+    def __init__(
+        self,
+        metrics: "reax.Metric | Sequence[reax.Metric] | dict[str, reax.Metric]",
+        evaluator: "reax.metrics.MetricEvaluator" = None,
+    ):
         super().__init__()
         self._metrics = flax.core.FrozenDict(_metrics_dict(metrics))
+        self._evaluator = evaluator if evaluator is not None else _evaluators.DefaultEvaluator()
 
     def items(self):
         """Items function."""
@@ -36,18 +43,25 @@ class MetricCollection(equinox.Module):
         By default, this will call the constructor with no arguments, if needed, subclasses can
         overwrite this with custom behaviour.
         """
-        return MetricCollection({name: metric.empty() for name, metric in self._metrics.items()})
+        return MetricCollection(
+            {name: metric.empty() for name, metric in self._metrics.items()}, self._evaluator
+        )
 
     def create(self, *args, **kwargs) -> "MetricCollection":
         """Create function."""
         return MetricCollection(
-            {name: metric.create(*args, **kwargs) for name, metric in self._metrics.items()}
+            {
+                name: self._evaluator.create(metric, *args, **kwargs)
+                for name, metric in self._metrics.items()
+            },
+            self._evaluator,
         )
 
     def update(self, *args, **kwargs) -> "MetricCollection":
         """Update function."""
         return MetricCollection(
-            {name: metric.update(*args, **kwargs) for name, metric in self._metrics.items()}
+            {name: metric.update(*args, **kwargs) for name, metric in self._metrics.items()},
+            self._evaluator,
         )
 
     @jt.jaxtyped(typechecker=beartype.beartype)
@@ -68,7 +82,7 @@ class MetricCollection(equinox.Module):
         ):
             merged[name] = other._metrics[name]  # pylint: disable=protected-access
 
-        return MetricCollection(merged)
+        return MetricCollection(merged, self._evaluator)
 
     def compute(self) -> dict[str, Any]:
         """Compute function."""

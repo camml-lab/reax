@@ -312,7 +312,7 @@ class Stage(abc.ABC):
 
         return False
 
-    def _run_child(self, stage: "reax.Stage") -> "reax.Stage":
+    def _run_child(self, stage: _StageT) -> _StageT:
         """Run a child stage."""
         self._child = stage
         stage.parent = weakref.proxy(self)

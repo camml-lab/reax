@@ -568,6 +568,7 @@ class Trainer(stages.StageListener, _deprecated.TrainerDeprecatedMixin):
         dataset_name: str = "train",
         fast_dev_run: bool | int = False,
         limit_batches: int | float = keys.NO_LIMIT,
+        metric_evaluator: "reax.metrics.MetricEvaluator" = None,
     ) -> "reax.stages.EvaluateStats":
         r"""Evaluate metrics on a dataset to get statistics about it.
 
@@ -587,6 +588,7 @@ class Trainer(stages.StageListener, _deprecated.TrainerDeprecatedMixin):
             rngs=self.rngs,
             dataset_name=dataset_name,
             limit_batches=limit_batches,
+            evaluator=metric_evaluator,
         )
         self._run_stage(eval_stats)
 

@@ -99,9 +99,12 @@ class Std(Aggregation):
     ):
         super().__init__()
         # State
-        self.total = total or jnp.array(0, jnp.float32)
-        self.sum_of_squares = sum_of_squares or jnp.array(0, jnp.float32)
-        self.count = count or jnp.array(0, jnp.int32)
+        # Use explicit 'is None' checks to keep JAX happy
+        self.total = total if total is not None else jnp.array(0, jnp.float32)
+        self.sum_of_squares = (
+            sum_of_squares if sum_of_squares is not None else jnp.array(0, jnp.float32)
+        )
+        self.count = count if count is not None else jnp.array(0, jnp.int32)
 
     @override
     @classmethod

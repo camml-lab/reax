@@ -130,3 +130,9 @@ class LeastSquaresEstimate(_metric.Metric[jax.Array]):
     def compute(self) -> jax.Array:
         """Compute function."""
         return jnp.linalg.lstsq(self.values, self.targets)[0]
+
+    @staticmethod
+    def reduce_fn(x, axis=0):
+        # We need to flatten the batch dimension into the data dimension
+        # (Batch, N, D) -> (Batch * N, D)
+        return jnp.concatenate(x, axis=axis)

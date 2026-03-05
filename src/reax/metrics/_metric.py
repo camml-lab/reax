@@ -4,6 +4,8 @@ import functools
 from typing import ClassVar, Generic, TypeVar, cast
 
 import equinox
+import jax
+import jax.numpy as jnp
 from typing_extensions import override
 
 __all__ = ("Metric", "FromFun")
@@ -80,6 +82,28 @@ class Metric(equinox.Module, Generic[_OutT], metaclass=abc.ABCMeta):
     @abc.abstractmethod
     def compute(self) -> _OutT:
         """Compute the metric."""
+
+    def reduce(self, axis: int = 0) -> "Metric[_OutT]":
+        """Collapses a vectorized (vmapped) metric into a single instance.
+
+        The default implementation assumes the metric state is additive.
+        Subclasses should override this if they require non-additive reduction
+        (e.g., taking the max, or concatenating lists).
+        """
+        reduce_fn = type(self).reduce_fn
+
+        def _apply(leaf):
+            # If it's a JAX array and has the axis we want to reduce
+            if isinstance(leaf, jax.Array) and leaf.ndim > axis:
+                return reduce_fn(leaf, axis=axis)
+            # Handle strings, None, or un-vmapped scalars
+            return leaf
+
+        return jax.tree_util.tree_map(_apply, self)
+
+    @staticmethod
+    def reduce_fn(x: _OutT, axis: int = 0) -> _OutT:
+        return jnp.sum(x, axis=axis)
 
 
 def hybrid_method(func: Callable):

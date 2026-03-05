@@ -1,5 +1,6 @@
 from . import (
     _classification,
+    _evaluators,
     _globals,
     _metric,
     _registry,
@@ -9,6 +10,7 @@ from . import (
     utils,
 )
 from ._classification import *
+from ._evaluators import *
 from ._globals import *
 from ._metric import *
 from ._registry import *
@@ -19,6 +21,7 @@ from .utils import *
 
 __all__ = (
     _classification.__all__
+    + _evaluators.__all__
     + _globals.__all__
     + aggregation.__all__
     + collections.__all__

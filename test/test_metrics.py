@@ -120,6 +120,47 @@ def test_stats_evaluator(rng_key, test_trainer):
     assert jnp.all(jnp.stack(jax.tree.flatten(comparison)[0]))
 
 
+def test_vmap_evaluator_parity(rng_key):
+    # 1. Setup batched data: (Batch, Features)
+    # Total 40 elements, but explicitly batched as 4 samples of 10
+    batch_size = 4
+    obs_per_sample = 10
+    values = random.normal(rng_key, (batch_size, obs_per_sample))
+
+    # Define our test metrics
+    stats = {
+        "avg": metrics.Average(),
+        "min": metrics.Min(),
+        "max": metrics.Max(),
+        "std": metrics.Std(),
+    }
+
+    vmap_eval = metrics.VmapEvaluator()
+    default_eval = metrics.DefaultEvaluator()
+
+    for name, metric in stats.items():
+        # 2. Compute via VmapEvaluator (Lifts create, then reduces)
+        # This simulates: reduce(vmap(metric.create)(values))
+        vmapped_metric = vmap_eval.create(metric, values)
+        vmapped_result = vmapped_metric.compute()
+
+        # 3. Compute via DefaultEvaluator (Treats the whole (4, 10) as one block)
+        # This is our 'ground truth' for the aggregation logic
+        standard_metric = default_eval.create(metric, values)
+        standard_result = standard_metric.compute()
+
+        # 4. Assert mathematical parity
+        # We use a slight tolerance for Std due to sum-of-squares precision
+        assert jnp.isclose(
+            vmapped_result, standard_result, atol=1e-6
+        ), f"Parity failed for {name}: vmap={vmapped_result}, std={standard_result}"
+
+    # 5. Regression check against raw JNP
+    # Ensure our Metric logic itself matches the JAX primitives
+    assert jnp.isclose(vmap_eval.create(stats["avg"], values).compute(), values.mean())
+    assert jnp.isclose(vmap_eval.create(stats["min"], values).compute(), values.min())
+
+
 def test_num_unique(rng_key, test_trainer):
     batch_size = 4
     values = random.randint(rng_key, (10,), minval=0, maxval=9)
@@ -190,3 +231,43 @@ def test_metrics_registry():
         "mae": metrics.MeanAbsoluteError,
     }
     assert not set(expected_metrics).difference(set(registry))
+
+
+def test_least_squares_vmap_reduction(rng_key):
+    # Setup: 4 samples in a batch, each sample has 10 observations of 3 features
+    batch_size = 4
+    n_obs = 10
+    n_features = 3
+
+    k1, k2, k3 = random.split(rng_key, 3)
+    inputs = random.normal(k1, (batch_size, n_obs, n_features))
+    # Create a simple linear relationship: y = Xw + noise
+    true_w = random.normal(k2, (n_features, 1))
+    outputs = inputs @ true_w + random.normal(k3, (batch_size, n_obs, 1)) * 0.1
+
+    # 1. Initialize Metric
+    ls_metric = metrics.LeastSquaresEstimate()
+    vmap_eval = metrics.VmapEvaluator()
+    default_eval = metrics.DefaultEvaluator()
+
+    # 2. Compute via Vmap (This tests your custom reduce_fn)
+    # vmap(create) produces values of shape (4, 10, 3)
+    # reduce(axis=0) should turn it into (40, 3)
+    vmapped_metric = vmap_eval.create(ls_metric, (inputs, outputs))
+
+    # 3. Compute via Default (The 'Ground Truth')
+    # Reshape manually to compare
+    flat_inputs = inputs.reshape(-1, n_features)
+    flat_outputs = outputs.reshape(-1, 1)
+    standard_metric = default_eval.create(ls_metric, (flat_inputs, flat_outputs))
+
+    # 4. Assertions
+    # Check shapes first - this is where the reduce_fn usually fails
+    assert vmapped_metric.values.shape == (batch_size * n_obs, n_features)
+    assert vmapped_metric.targets.shape == (batch_size * n_obs, 1)
+
+    # Check the actual result (the weights w)
+    vmap_w = vmapped_metric.compute()
+    std_w = standard_metric.compute()
+
+    assert jnp.allclose(vmap_w, std_w)

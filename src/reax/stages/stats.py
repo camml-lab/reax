@@ -1,6 +1,6 @@
 """Stage for evaluating dataset statistics"""
 
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING
 
 import beartype
 from flax import nnx
@@ -13,12 +13,12 @@ from . import stages
 from .. import exceptions
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     import reax
 
 
 __all__ = ("EvaluateStats",)
-
-OutT = TypeVar("OutT")
 
 
 class EvaluateStats(stages.EpochStage):
@@ -36,6 +36,7 @@ class EvaluateStats(stages.EpochStage):
         fast_dev_run: bool | int = False,
         limit_batches: int | float | None = None,
         ignore_missing=False,
+        evaluator: "reax.metrics.MetricEvaluator" = None,
     ):
         """Init function."""
         super().__init__(
@@ -52,6 +53,7 @@ class EvaluateStats(stages.EpochStage):
         # Params
         self._stats = metrics.MetricCollection(stats)
         self._ignore_missing = ignore_missing
+        self._evaluator = evaluator if evaluator is not None else metrics.DefaultEvaluator()
 
     @override
     def _step(self) -> None:
@@ -59,14 +61,9 @@ class EvaluateStats(stages.EpochStage):
         # Calculate and log all the stats
         for name, stat in self._stats.items():
             try:
-                if isinstance(self.batch, tuple):
-                    self.log(
-                        name, stat.create(*self.batch), on_step=False, on_epoch=True, logger=True
-                    )
-                else:
-                    self.log(
-                        name, stat.create(self.batch), on_step=False, on_epoch=True, logger=True
-                    )
+                calculated = self._evaluator.create(stat, self.batch)
+                self.log(name, calculated, on_step=False, on_epoch=True, logger=True)
+
             except exceptions.DataNotFound:
                 if not self._ignore_missing:
                     raise
