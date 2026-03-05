@@ -36,6 +36,7 @@ r"""Early Stopping
 Monitor a metric and stop training when it stops improving.
 
 """
+
 from collections.abc import Callable
 import logging
 from typing import TYPE_CHECKING, Final, Literal

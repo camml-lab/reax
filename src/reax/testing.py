@@ -71,8 +71,7 @@ def run_function_in_subprocess(target_func: Callable, *func_args, **func_kwargs)
 
     # 3. Define the Argument and Exception-Handling Execution Block
     # The child will read the serialized arguments from sys.argv[1]
-    execution_block = textwrap.dedent(
-        f"""
+    execution_block = textwrap.dedent(f"""
 
     # --- Code injected by run_function_in_subprocess ---
     import sys
@@ -131,8 +130,7 @@ def run_function_in_subprocess(target_func: Callable, *func_args, **func_kwargs)
             sys.exit(1)
 
         print("--- Subprocess End ---")
-    """
-    )
+    """)
     # Combine the original code and the execution block
     combined_code = original_code + execution_block
 
