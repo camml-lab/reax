@@ -8,6 +8,7 @@ import jaxtyping as jt
 
 from . import _evaluators
 from . import _metric as metric_
+from .. import exceptions
 
 if TYPE_CHECKING:
     import reax
@@ -47,15 +48,17 @@ class MetricCollection(equinox.Module):
             {name: metric.empty() for name, metric in self._metrics.items()}, self._evaluator
         )
 
-    def create(self, *args, **kwargs) -> "MetricCollection":
+    def create(self, *args, ignore_missing=False, **kwargs) -> "MetricCollection":
         """Create function."""
-        return MetricCollection(
-            {
-                name: self._evaluator.create(metric, *args, **kwargs)
-                for name, metric in self._metrics.items()
-            },
-            self._evaluator,
-        )
+        metrics = {}
+        for name, metric in self._metrics.items():
+            try:
+                metrics[name] = self._evaluator.create(metric, *args, **kwargs)
+            except exceptions.DataNotFound:
+                if not ignore_missing:
+                    raise
+
+        return MetricCollection(metrics, self._evaluator)
 
     def update(self, *args, **kwargs) -> "MetricCollection":
         """Update function."""

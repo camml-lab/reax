@@ -203,6 +203,15 @@ class FromFun(Metric[_OutT]):
         val = self._call_fn(*args, **kwargs)  # pylint: disable=protected-access
         return type(self)(state=self._state.update(*val))
 
+    @override
+    def reduce(self, *args, **kwargs) -> "FromFun":
+        """Reduce function."""
+        if self.is_empty:
+            raise RuntimeError("Metric is empty!")
+
+        return type(self)(state=self._state.reduce(*args, **kwargs))
+
+    @override
     def compute(self) -> _OutT:
         """Compute function."""
         if self._state is None:

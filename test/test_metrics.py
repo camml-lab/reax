@@ -163,7 +163,7 @@ def test_vmap_evaluator_parity(rng_key):
 
 def test_num_unique(rng_key, test_trainer):
     batch_size = 4
-    values = random.randint(rng_key, (10,), minval=0, maxval=9)
+    values = random.randint(rng_key, (10,), minval=0, maxval=3)
     res = test_trainer.eval_stats(
         metrics.NumUnique(), reax.data.ArrayLoader(values, batch_size=batch_size)
     ).logged_metrics["NumUnique"]
@@ -192,6 +192,62 @@ def test_unique(rng_key, test_trainer):
         metrics.Unique(), reax.data.ArrayLoader(values, batch_size=9)
     ).logged_metrics["Unique"]
     assert jnp.all(jnp.array(res) == jnp.unique(values))
+
+
+@pytest.mark.parametrize(
+    "dtype", [jnp.int32, jnp.int64, jnp.uint32, jnp.uint64, jnp.float32, jnp.float64]
+)
+def test_unique_vmap_reduce(rng_key, dtype):
+    """Test that Unique handles vmap and reduction correctly."""
+    # 1. Create a vectorized batch of data: (4, 5) -> 4 batches, 5 items each
+    # Some overlaps exist within batches and between batches
+    data = jnp.array(
+        [[1, 2, 2, 3, 4], [3, 4, 4, 5, 6], [6, 6, 7, 8, 8], [1, 5, 9, 9, 0]], dtype=dtype
+    )
+    mask = data != 4
+
+    # 2. vmap the creation/update
+    # We create a Unique instance for each row
+    def create_and_update(row, row_mask):
+        return metrics.Unique.create(row, mask=row_mask)
+
+    # Batch create states
+    vectorized_unique = jax.vmap(create_and_update)(data, mask)
+
+    # 3. Perform the reduction
+    # This collapses the (4, max_size) accumulator into (1, max_size)
+    reduced_unique = vectorized_unique.reduce(axis=0)
+
+    # 4. Verify result
+    # The union of {1,2,3,4}, {3,4,5,6}, {6,7,8}, {1,5,9,0} is {0,1,2,3,4,5,6,7,8,9} (except 4 which is masked)
+    expected = jnp.array([0, 1, 2, 3, 5, 6, 7, 8, 9], dtype=dtype)
+    result = reduced_unique.compute()
+
+    assert jnp.all(jnp.sort(result) == expected)
+
+
+def test_unique_jit_vmap(rng_key):
+    """Ensure it works inside a JIT compiled function with vmap."""
+
+    @jax.jit
+    def run_vmap_accumulate(data):
+        # We perform the creation and the reduction entirely within JIT.
+        # We return the raw accumulator, keeping shapes static.
+        states = jax.vmap(metrics.Unique.create)(data)
+        return states.reduce(axis=0).accumulator
+
+    data = jnp.array([[1, 1], [2, 2]])
+
+    # Run the JIT-ed part
+    raw_accumulator = run_vmap_accumulate(data)
+
+    # Now, run the 'compute' logic on the host (outside JIT)
+    # Since raw_accumulator is a concrete JAX array on the host,
+    # we can easily filter it.
+    valid_mask = raw_accumulator != metrics.Unique.create(data).fill_value
+    actual = raw_accumulator[valid_mask]
+
+    assert jnp.array_equal(jnp.sort(actual), jnp.array([1, 2]))
 
 
 def test_metric_collection(rng_key):

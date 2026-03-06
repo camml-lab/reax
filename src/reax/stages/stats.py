@@ -10,7 +10,6 @@ from typing_extensions import override
 from reax import metrics
 
 from . import stages
-from .. import exceptions
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -60,9 +59,9 @@ class EvaluateStats(stages.EpochStage):
         """Step function."""
         # Calculate...
         if isinstance(self.batch, tuple):
-            calculated = self._stats.create(*self.batch)
+            calculated = self._stats.create(*self.batch, ignore_missing=self._ignore_missing)
         else:
-            calculated = self._stats.create(self.batch)
+            calculated = self._stats.create(self.batch, ignore_missing=self._ignore_missing)
 
         # ...and log all the stats
         for name, stat in calculated.items():

@@ -1,6 +1,7 @@
 import abc
-from typing import TypeVar
+from typing import Any, TypeVar
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 from typing_extensions import override
@@ -49,36 +50,167 @@ class Max(utils.WithAccumulator, Aggregation):
     reduce_fn = jnp.max
 
 
-class Unique(utils.WithAccumulator, Aggregation):
-    """Get the set of unique values.
-
-    warning: this cannot be used with JAX jit because it relies on dynamically-sized arrays
-    """
-
-    @staticmethod
-    def reduce_fn(values, where=None):
-        """Reduce fn."""
-        np_ = arrays.infer_backend([values, where])
-        return np_.unique(values[where] if where is not None else values)
+SET_ACCUMULATION_MAX_SIZE = 512
+SET_ACCUMULATION_FILL_VALUE = -1e30
 
 
-class NumUnique(utils.WithAccumulator, Aggregation):
-    """Count the number of unique values.
+class SetAccumulation(Metric[jax.Array]):
+    """Get the set of unique values with a fixed memory footprint."""
 
-    Warning:
-        this cannot be used with JAX jit because it relies on dynamically-sized arrays.....
-    """
+    # We keep these static so JAX knows the shape of the accumulator at compile time
+    max_size: int = eqx.field(static=True, default=SET_ACCUMULATION_MAX_SIZE)
+    fill_value: Any = eqx.field(static=True, default=-1)
+    _accumulator: jax.Array | None = None
 
-    @staticmethod
-    def reduce_fn(values, where=None):
-        """Reduce fn."""
-        np_ = arrays.infer_backend([values, where])
-        return np_.unique(values[where] if where is not None else values)
+    @property
+    def accumulator(self) -> jax.Array:
+        if self._accumulator is None:
+            raise RuntimeError("Metric is empty!")
 
+        return self._accumulator
+
+    @classmethod
+    def empty(cls, max_size=SET_ACCUMULATION_MAX_SIZE, fill_value=None) -> "SetAccumulation":
+        # Leave fill_value as None so 'create' can infer it on the first update
+        return cls(_accumulator=None, max_size=max_size, fill_value=fill_value)
+
+    @classmethod
+    def create(
+        cls,
+        values: jax.typing.ArrayLike,
+        mask: jax.typing.ArrayLike | None = None,
+        max_size: int = SET_ACCUMULATION_MAX_SIZE,
+        fill_value: Any = None,
+    ) -> "SetAccumulation":
+        np_ = arrays.infer_backend([values])
+        val_arr = np_.array(values)
+
+        if fill_value is None:
+            if jnp.issubdtype(val_arr.dtype, jnp.floating):
+                # Use a large finite negative number to avoid NaN gradient poisoning
+                fill_value = SET_ACCUMULATION_FILL_VALUE
+            else:
+                fill_value = jnp.iinfo(val_arr.dtype).max
+
+        acc = cls._get_unique_fixed(np_, val_arr, max_size, fill_value, where=mask)
+        return cls(_accumulator=acc, max_size=max_size, fill_value=fill_value)
+
+    @override
+    def update(self, values, mask=None) -> "SetAccumulation":
+        if self._accumulator is None:
+            return self.create(
+                values, mask=mask, max_size=self.max_size, fill_value=self.fill_value
+            )
+
+        # 1. Align dtypes
+        values = values.astype(self.accumulator.dtype)
+        fv_cast = self._cast_sentinel(self.accumulator)
+
+        if mask is not None:
+            values = jnp.where(mask, values, fv_cast)
+
+        combined = jnp.concatenate([self.accumulator, values])
+
+        # 3. Re-uniquify the combined buffer
+        new_acc = self._get_unique_fixed(jnp, combined, self.max_size, self.fill_value)
+
+        return eqx.tree_at(
+            lambda m: m._accumulator, self, new_acc  # pylint: disable=protected-access
+        )
+
+    @override
+    def merge(self, other: "SetAccumulation") -> "SetAccumulation":
+        if self._accumulator is None:
+            # Ensure we return an instance with OUR config, even if the other one is None
+            return self
+        if other._accumulator is None:  # pylint: disable=protected-access
+            return self
+
+        np_ = arrays.infer_backend([self.accumulator, other.accumulator])
+        combined = np_.concatenate([self.accumulator, other.accumulator])
+        new_acc = self._get_unique_fixed(np_, combined, self.max_size, self.fill_value)
+        return eqx.tree_at(lambda m: m.accumulator, self, new_acc)
+
+    @override
     def compute(self) -> jax.Array:
-        """Compute function."""
-        np_ = arrays.infer_backend(self.accumulator)
-        return np_.asarray(self.accumulator.size)
+        # Returns the actual set (ignoring the sentinel padding)
+        sentinel = self._cast_sentinel(self.accumulator)
+        if jnp.issubdtype(self.accumulator.dtype, jnp.floating):
+            mask = jnp.logical_not(jnp.isclose(self.accumulator, sentinel))
+        else:
+            mask = self.accumulator != sentinel
+
+        return self.accumulator[mask]  # pylint: disable=unsubscriptable-object
+
+    @override
+    def reduce(self, axis: int = 0) -> "SetAccumulation":
+        """Collapses a vectorized (vmapped) metric into a single instance using scan."""
+        data = jnp.moveaxis(self.accumulator, axis, 0)
+        init_val = jnp.full((self.max_size,), self.fill_value, dtype=data.dtype)
+
+        def _scan_op(acc, next_row):
+            combined = jnp.concatenate([acc, next_row])
+            res = self._get_unique_fixed(jnp, combined, self.max_size, self.fill_value)
+            return res, None
+
+        final_acc, _ = jax.lax.scan(_scan_op, init_val, data)
+        return type(self)(
+            _accumulator=final_acc, max_size=self.max_size, fill_value=self.fill_value
+        )
+
+    def saturation(self) -> jax.Array:
+        # 5. FIX: Ensure saturation uses the same robust mask as compute
+        sentinel = self._cast_sentinel(self.accumulator)
+        if jnp.issubdtype(self.accumulator.dtype, jnp.floating):
+            mask = jnp.logical_not(jnp.isclose(self.accumulator, sentinel))
+        else:
+            mask = self.accumulator != sentinel
+        return jnp.sum(mask).astype(jnp.float32) / self.max_size
+
+    @staticmethod
+    def _get_unique_fixed(np_, values, max_size, fill_value, where=None):
+        # Cast fill_value to match data exactly to prevent comparison drift
+        fv_cast = np_.array(fill_value, dtype=values.dtype)
+
+        if where is not None:
+            values = np_.where(where, values, fv_cast)
+
+        if np_ is jnp:
+            # size=max_size forces the output to be a static-shaped (max_size,) array
+            return jnp.unique(values, size=max_size, fill_value=fv_cast)
+
+        # Fallback for standard NumPy
+        uniques = np_.unique(values)
+        res = np_.full((max_size,), fill_value, dtype=values.dtype)
+        actual = uniques[uniques != fill_value]
+        limit = min(len(actual), max_size)
+        res[:limit] = actual[:limit]
+        return res
+
+    def _cast_sentinel(self, array: jax.Array) -> jax.Array:
+        return jnp.array(self.fill_value, dtype=array.dtype)
+
+
+class Unique(SetAccumulation):
+    """Get the set of unique values."""
+
+
+class NumUnique(SetAccumulation):
+    """Count the number of unique values."""
+
+    @override
+    def compute(self) -> jax.Array:
+        sentinel = self._cast_sentinel(self.accumulator)
+
+        # Use the robust masking logic
+        if jnp.issubdtype(self.accumulator.dtype, jnp.floating):
+            # For float32, -1e30 != -1.2799...e+34 without isclose
+            mask = jnp.logical_not(jnp.isclose(self.accumulator, sentinel))
+        else:
+            mask = self.accumulator != sentinel
+
+        # We return an integer for a count
+        return jnp.sum(mask).astype(jnp.int32)
 
 
 class Average(utils.WithAccumulatorAndCount, Aggregation):

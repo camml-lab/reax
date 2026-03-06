@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from typing import TYPE_CHECKING, ClassVar, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, TypeVar
 
 import beartype
 import clu.internal.utils
@@ -10,17 +10,19 @@ import jaxtyping as jt
 import numpy as np
 from typing_extensions import override
 
-from .. import types
 from .. import utils as reax_utils
 from ._metric import Metric
 
 if TYPE_CHECKING:
     import reax
 
+    OptionalMask = reax.types.ArrayMask | None
+else:
+    OptionalMask = Any
+
 __all__ = tuple()
 
 M = TypeVar("M", bound=Metric)
-OptionalMask = types.ArrayMask | None
 
 
 class ReduceFn(Protocol):
@@ -28,7 +30,9 @@ class ReduceFn(Protocol):
         """Perform reduction on the passed values."""
 
 
-def _prepare_mask(mask: types.ArrayMask, array: jt.Float[jt.Array, "..."]) -> types.ArrayMask:
+def _prepare_mask(
+    mask: "reax.types.ArrayMask", array: jt.Float[jt.Array, "..."]
+) -> "reax.types.ArrayMask":
     """Prepare a mask for use with jnp.where(mask, array, ...).
 
     This needs to be done to make sure the mask is of the right shape to be compatible with such an
