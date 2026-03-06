@@ -51,23 +51,19 @@ class EvaluateStats(stages.EpochStage):
         )
 
         # Params
-        self._stats = metrics.MetricCollection(stats)
+        evaluator = evaluator if evaluator is not None else metrics.DefaultEvaluator()
+        self._stats = metrics.MetricCollection(stats, evaluator)
         self._ignore_missing = ignore_missing
-        self._evaluator = evaluator if evaluator is not None else metrics.DefaultEvaluator()
 
     @override
     def _step(self) -> None:
         """Step function."""
-        # Calculate and log all the stats
-        for name, stat in self._stats.items():
-            try:
-                if isinstance(self.batch, tuple):
-                    calculated = stat.create(*self.batch)
-                else:
-                    calculated = stat.create(self.batch)
+        # Calculate...
+        if isinstance(self.batch, tuple):
+            calculated = self._stats.create(*self.batch)
+        else:
+            calculated = self._stats.create(self.batch)
 
-                self.log(name, calculated, on_step=False, on_epoch=True, logger=True)
-
-            except exceptions.DataNotFound:
-                if not self._ignore_missing:
-                    raise
+        # ...and log all the stats
+        for name, stat in calculated.items():
+            self.log(name, stat, on_step=False, on_epoch=True, logger=True)

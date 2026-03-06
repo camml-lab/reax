@@ -1,5 +1,8 @@
+import os
+
 from jax import config, random
 import pytest
+import tqdm
 
 import reax.loggers.pandas
 
