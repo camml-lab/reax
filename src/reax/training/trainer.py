@@ -735,11 +735,12 @@ class Trainer(stages.StageListener, _deprecated.TrainerDeprecatedMixin):
         """On stage iter ending."""
         if isinstance(stage, stages.EpochStage):
             self._logging.update(stage)
-            logging_metrics = {"epoch": self.current_epoch, "stage": stage.name}
-            logging_metrics.update(stage.logged_metrics)
-            for logger in self.loggers:
-                logger.log_metrics(metrics=logging_metrics, step=self.global_updates - 1)
-                logger.save()
+            if stage.logged_metrics:
+                logging_metrics = {"epoch": self.current_epoch, "stage": stage.name}
+                logging_metrics.update(stage.logged_metrics)
+                for logger in self.loggers:
+                    logger.log_metrics(metrics=logging_metrics, step=self.global_updates - 1)
+                    logger.save()
 
             self._events.fire_event(hooks.TrainerListener.on_batch_end, stage, step, outputs)
 
@@ -764,7 +765,7 @@ class Trainer(stages.StageListener, _deprecated.TrainerDeprecatedMixin):
             metrics = stage.results
             if metrics[keys.LOG]:
                 logging_metrics = {"epoch": self.current_epoch, "stage": stage.name}
-                logging_metrics.update(self.logged_metrics)
+                logging_metrics.update(stage.listener_metrics)
                 for logger in self.loggers:
                     logger.log_metrics(metrics=logging_metrics, step=self.global_updates - 1)
                     logger.save()

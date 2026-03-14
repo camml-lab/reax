@@ -186,7 +186,7 @@ class CsvLogger(logger.Logger):
         if step is None:
             step = len(self.experiment.metrics)
 
-        metrics = jax.tree_util.tree_map(
+        jax.tree_util.tree_map(
             lambda x: x.copy_to_host_async() if isinstance(x, jax.Array) else x, metrics
         )
         self.experiment.log_metrics(metrics, step)
@@ -263,7 +263,7 @@ class ExperimentWriter:
 
         def _handle_value(value: jax.Array | Any) -> Any:
             if isinstance(value, jax.Array):
-                return value.item()
+                return value.item() if value.ndim == 0 else value.tolist()
             return value
 
         if step is None:
