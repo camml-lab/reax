@@ -2,7 +2,6 @@ import abc
 from collections.abc import Generator
 import contextlib
 import logging
-import pathlib
 
 from typing_extensions import override
 

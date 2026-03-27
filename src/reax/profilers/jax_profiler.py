@@ -30,7 +30,7 @@ class JaxProfiler(profiler.Profiler):
         self._traces: dict[str, jax.profiler.TraceAnnotation] = {}
 
     @override
-    def start(self, profile_name: str, **kwargs):
+    def start(self, profile_name: str, **_kwargs):
         """Start a new trace"""
         jax.profiler.start_trace(
             self._log_dir,
@@ -54,7 +54,7 @@ class JaxProfiler(profiler.Profiler):
     @override
     def start_recording(self, action_name: str) -> None:
         trace = jax.profiler.TraceAnnotation(action_name)
-        trace.__enter__()
+        trace.__enter__()  # pylint: disable=unnecessary-dunder-call
         self._traces[action_name] = trace
 
     @override

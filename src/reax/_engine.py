@@ -48,7 +48,10 @@ class Engine:
             communication.
     """
 
+    # pylint: disable=too-many-public-methods
+
     def __init__(
+        # pylint: disable=too-many-positional-arguments
         self,
         accelerator: str = "auto",
         strategy: "str | reax.Strategy" = "auto",
@@ -468,7 +471,7 @@ def _init_loggers(
 
 
 def _init_profiler(profiler: "reax.Profiler | str | None" = None) -> "reax.Profiler":
-    PROFILERS: Final[dict[str, type(profilers.Profiler)]] = {
+    profs: Final[dict[str, type(profilers.Profiler)]] = {
         "dummy": profilers.DummyProfiler,
         "jax": profilers.JaxProfiler,
     }
@@ -477,7 +480,7 @@ def _init_profiler(profiler: "reax.Profiler | str | None" = None) -> "reax.Profi
         return profilers.DummyProfiler()
 
     if isinstance(profiler, str):
-        profiler_cls = PROFILERS[profiler]
+        profiler_cls = profs[profiler]
         return profiler_cls()
 
     return profiler
