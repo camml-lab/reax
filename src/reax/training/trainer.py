@@ -774,7 +774,6 @@ class Trainer(stages.StageListener, _deprecated.TrainerDeprecatedMixin):
                 logging_metrics.update(stage.listener_metrics)
                 for logger in self.loggers:
                     logger.log_metrics(metrics=logging_metrics, step=self.global_updates - 1)
-                    logger.save()
 
         self._fire_stage_event(stage, stages.StageListener.on_stage_end)
 

@@ -46,6 +46,8 @@ from typing import Any
 
 import fsspec
 import jax
+import jax.numpy as jnp
+import jaxtyping as jt
 from typing_extensions import override
 
 from reax.lightning import rank_zero
@@ -186,9 +188,6 @@ class CsvLogger(logger.Logger):
         if step is None:
             step = len(self.experiment.metrics)
 
-        jax.tree_util.tree_map(
-            lambda x: x.copy_to_host_async() if isinstance(x, jax.Array) else x, metrics
-        )
         self.experiment.log_metrics(metrics, step)
         if (step + 1) % self._flush_logs_every_n_steps == 0:
             self.save()
@@ -254,24 +253,20 @@ class ExperimentWriter:
         self._fs.makedirs(self.log_dir, exist_ok=True)
 
         # State
-        self.metrics: list[dict[str, float]] = []
+        self._metrics: list[dict[str, float | jt.Float[jnp.ndarray, "..."]]] = []
         self.metrics_keys: list[str] = []
         self.hparams: dict[str, Any] = {}
 
-    def log_metrics(self, metrics_dict: dict[str, float], step: int | None = None) -> None:
+    @property
+    def metrics(self) -> list[dict[str, float]]:
+        # The publicly accessible metrics are always in floats (rather than jax arrays)
+        self._metrics = jax.tree.map(materialize, self._metrics)
+        return self._metrics
+
+    def log_metrics(self, metrics: dict[str, float], step: int | None = None) -> None:
         """Record metrics."""
-
-        def _handle_value(value: jax.Array | Any) -> Any:
-            if isinstance(value, jax.Array):
-                return value.item() if value.ndim == 0 else value.tolist()
-            return value
-
-        if step is None:
-            step = len(self.metrics)
-
-        metrics = {k: _handle_value(v) for k, v in metrics_dict.items()}
         metrics["step"] = step
-        self.metrics.append(metrics)
+        self._metrics.append(metrics)
 
     def log_hparams(self, params: dict[str, Any]) -> None:
         """Record hparams."""
@@ -282,7 +277,7 @@ class ExperimentWriter:
         hparams_file = os.path.join(self.log_dir, self.NAME_HPARAMS_FILE)
         saving.save_hparams_to_yaml(hparams_file, self.hparams)
 
-        if not self.metrics:
+        if not self._metrics:
             return
 
         new_keys = self._record_new_keys()
@@ -301,11 +296,11 @@ class ExperimentWriter:
                 writer.writeheader()
             writer.writerows(self.metrics)
 
-        self.metrics = []  # reset
+        self._metrics = []  # reset
 
     def _record_new_keys(self) -> set[str]:
         """Records new keys that have not been logged before."""
-        current_keys = set().union(*self.metrics)
+        current_keys = set().union(*self._metrics)
         new_keys = current_keys - set(self.metrics_keys)
         self.metrics_keys.extend(new_keys)
         self.metrics_keys.sort()
@@ -328,3 +323,10 @@ class ExperimentWriter:
             )
             if self._fs.isfile(self.metrics_file_path):
                 self._fs.rm_file(self.metrics_file_path)
+
+
+def materialize(value: jax.Array | Any) -> Any:
+    """If the value is an array it will be converted to a scalar or a list"""
+    if isinstance(value, jax.Array):
+        return value.item() if value.ndim == 0 else value.tolist()
+    return value

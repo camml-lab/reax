@@ -201,9 +201,6 @@ class WithAccumulatorAndCount(WithAccumulator):
     @jt.jaxtyped(typechecker=beartype.beartype)
     def merge(self, other: Self) -> Self:
         """Merge function."""
-        if self.count == 0:
-            return other
-
         cls = type(self)
         return cls(
             accumulator=cls.reduce_fn(cls.merge_fn((self.accumulator, other.accumulator))),
@@ -219,7 +216,7 @@ class WithAccumulatorAndCount(WithAccumulator):
     ) -> Self:
         """Update function."""
         cls = type(self)
-        if self.count == 0:
+        if self.accumulator is None:
             # This metric is empty
             return cls.create(values, mask=mask)
 

@@ -385,6 +385,7 @@ class EpochStage(Stage, abc.ABC):
         # State
         self._iterator = None
         self._batch: Any | None = None
+        self._next_batch: Any | None = None
         self._total_batch_idx: int = 0
         self._metrics: "reax.results.ResultCollection | None" = None
         self._metrics_results: "reax.stages.MetricResults | None" = None
@@ -519,12 +520,13 @@ class EpochStage(Stage, abc.ABC):
     def _on_starting(self):
         """On starting."""
         super()._on_starting()
+        # Get the next bach ready for starting the stage
+        self._fetch_next_batch()
 
         if self._module is not None:
             was_uninitialised = self._module.parameters() is None
-            example_batch = next(iter(self.dataloader))
-            example_batch = self._engine.to_device(example_batch)
-            self._module.configure_model(self, example_batch)
+            self._next_batch = self._engine.to_device(self._next_batch)
+            self._module.configure_model(self, self._next_batch)
 
             # Only the root stage does setup as this only needs to be done once per stage tree
             if was_uninitialised and self._module.parameters() is not None:
@@ -532,7 +534,6 @@ class EpochStage(Stage, abc.ABC):
                 self._module.set_parameters(params)
 
         self._metrics = results.ResultCollection()
-        self._iterator = iter(self.dataloader)
         self._metrics_results = None
 
     def _on_started(self):
@@ -545,14 +546,25 @@ class EpochStage(Stage, abc.ABC):
     @override
     def _on_iteration_starting(self):
         """On iteration starting."""
-        batch = next(self._iterator)
-        self._batch = self._engine.to_device(batch)
+        if self._next_batch is None:
+            # Exhausted all the data
+            raise StopIteration
+
+        # Move the next into the current
+        self._batch = self._engine.to_device(self._next_batch)
+        self._next_batch = None
         super()._on_iteration_starting()
 
     @override
     def _on_iteration_finished(self, outputs: Any, /) -> None:
         """On iteration finished."""
         super()._on_iteration_finished(outputs)
+
+        # Prefetch the next batch (if there is one).  This allows for pipelining i.e. the GPU keeps
+        # working on the model, while we (the CPU), fetch and process the next batch
+        # We then process the metrics and other things that may require a synchronisation
+        self._fetch_next_batch()
+
         metrics = {keys.PBAR: {}, keys.LOG: {}, keys.LISTENER: {}}
         for _name, entry in self.metrics.items():
             if entry.meta.on_step:  # Here we are stepping
@@ -603,6 +615,8 @@ class EpochStage(Stage, abc.ABC):
     def _teardown(self) -> None:
         self._datamanager.teardown(weakref.proxy(self))
         super()._teardown()
+        self._batch = None
+        self._next_batch = None
 
     @property
     @deprecated(
@@ -614,3 +628,15 @@ class EpochStage(Stage, abc.ABC):
             return dict()
 
         return self._metrics_results[keys.LISTENER]
+
+    def _fetch_next_batch(self) -> None:
+        if self._iterator is None:
+            self._iterator = iter(self.dataloader)
+
+        try:
+            batch = next(self._iterator)
+        except StopIteration:
+            self._iterator = None
+            batch = None
+
+        self._next_batch = batch
