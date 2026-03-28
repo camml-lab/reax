@@ -73,13 +73,13 @@ class Stage(abc.ABC):
             raise TypeError("module must be a reax.Module")
 
         # Params
-        self._name = name
-        self._engine = engine
+        self._name: Final[str] = name
         self._min_iters: Final[int] = min_iters
         self._max_iters: Final[int | None] = max_iters
         self._enable_checkpointing: Final[bool] = enable_checkpointing
 
         # State
+        self._engine = engine
         self._state: StageState = StageState.INITIALIZING
         self._module: "reax.Module | None" = module
         self._datamanager = datamanager
@@ -231,8 +231,6 @@ class Stage(abc.ABC):
             self._on_stopped()
             self.events.fire_event(common.StageListener.on_stage_ended, weakref.proxy(self))
 
-            self._teardown()
-
             raise
         except BaseException:
             self._state = StageState.INTERRUPTED
@@ -336,11 +334,6 @@ class Stage(abc.ABC):
 
     def _on_exception(self, exception: BaseException) -> None:
         """Hook to deal with an exception"""
-
-    def _teardown(self):
-        """Teardown: perform any necessary cleanup."""
-        if self._module is not None:
-            self._module.teardown(weakref.proxy(self))
 
 
 class EpochStage(Stage, abc.ABC):
@@ -604,19 +597,20 @@ class EpochStage(Stage, abc.ABC):
         # Convert tensors to python scalars
         self._metrics_results = metrics
 
+    @override
+    def _on_stopped(self):
+        super()._on_stopped()
+        # Reset 'loop' variables in case we run again
+        self._iterator = None
+        self._batch = None
+        self._next_batch = None
+
     def _on_epoch_end(self) -> None:
         """The epoch is ending."""
 
     @override
     def _on_exception(self, exception: BaseException) -> None:
         self._datamanager.on_exception(exception)
-
-    @override
-    def _teardown(self) -> None:
-        self._datamanager.teardown(weakref.proxy(self))
-        super()._teardown()
-        self._batch = None
-        self._next_batch = None
 
     @property
     @deprecated(

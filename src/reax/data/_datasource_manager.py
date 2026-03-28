@@ -90,7 +90,6 @@ class DataSourceManager(abc.ABC):
 
     def teardown(self, stage) -> None:
         """Tell the data source to tear down"""
-
         if self._datasource is not None:
             self._datasource.teardown(stage)
 
