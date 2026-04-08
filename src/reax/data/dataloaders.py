@@ -1,3 +1,5 @@
+from typing import Final
+
 from . import _types, collate, fetchers, samplers
 
 __all__ = ("GenericDataLoader",)
@@ -12,18 +14,18 @@ class GenericDataLoader(_types.DataLoader):
         collate_fn: _types.CollateFn | None = None,
     ):
         """Init function."""
-        self._batch_size = batch_size
+        # Params
+        self._batch_size: Final[int] = batch_size
+        if collate_fn is None:
+            collate_fn = collate.get_default_collator().collate
+        self._collate_fn: Final[_types.CollateFn] = collate_fn
+
         self._dataset = dataset
         self._sampler = samplers.create_sampler(
             dataset,
             batch_size=batch_size,
             shuffle=shuffle,
         )
-
-        if collate_fn is None:
-            collate_fn = collate.get_default_collator().collate
-
-        self._fetcher = fetchers.create_fetcher(dataset, collate_fn=collate_fn)
 
     @property
     def batch_size(self) -> int:
@@ -32,5 +34,6 @@ class GenericDataLoader(_types.DataLoader):
 
     def __iter__(self):
         """Iter function."""
+        fetcher = fetchers.create_fetcher(self._dataset, collate_fn=self._collate_fn)
         for indices in self._sampler:
-            yield self._fetcher.fetch(indices)
+            yield fetcher.fetch(indices)

@@ -175,7 +175,7 @@ class EarlyStopping(hooks.TrainerListener):
 
     def _should_skip_check(self, trainer: "reax.Trainer") -> bool:
         """Should skip check."""
-        return not isinstance(trainer.stage, stages.Fit)
+        return not isinstance(trainer.stage, stages.Fit) and not trainer.sanity_checking
 
     @override
     def on_fit_start(self, _trainer: "reax.Trainer", stage: "reax.stages.Fit", /) -> None:

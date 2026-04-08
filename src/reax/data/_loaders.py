@@ -1,5 +1,5 @@
 from collections.abc import Iterable, Iterator
-from typing import TYPE_CHECKING, Optional, TypeVar
+from typing import TYPE_CHECKING, Final, Optional, TypeVar
 
 import beartype
 import jax
@@ -38,11 +38,14 @@ class FetcherDataLoader(_types.DataLoader[_T_co, _U]):
         self,
         dataset: "reax.data.Dataset[_T_co]",
         sampler: _types.Sampler | Iterable,
-        fetcher: "fetchers._BaseFetcher[_T_co, _U]",
+        collate_fn: _types.CollateFn,
     ):
+        # Params
+        self._collate_fn: Final[_types.CollateFn] = collate_fn
+
+        # State
         self._dataset = dataset
         self._sampler = sampler
-        self._fetcher = fetcher
 
     @override
     @property
@@ -56,14 +59,17 @@ class FetcherDataLoader(_types.DataLoader[_T_co, _U]):
 
     def __iter__(self) -> Iterator[_U]:
         """Iter function."""
+        fetcher = fetchers.create_fetcher(self._dataset, collate_fn=self._collate_fn)
         try:
             for indices in self.sampler:
-                yield self._fetcher.fetch(indices)
+                yield fetcher.fetch(indices)
         except StopIteration:
             pass
 
     def with_new_sampler(self, sampler: "reax.data.Sampler") -> "FetcherDataLoader[_T_co, _U]":
-        return FetcherDataLoader(dataset=self._dataset, sampler=sampler, fetcher=self._fetcher)
+        return FetcherDataLoader(
+            dataset=self._dataset, sampler=sampler, collate_fn=self._collate_fn
+        )
 
 
 class ReaxDataLoader(FetcherDataLoader[_T_co, _U]):
@@ -85,9 +91,7 @@ class ReaxDataLoader(FetcherDataLoader[_T_co, _U]):
         if collate_fn is None:
             collate_fn = collate.get_default_collator().collate
 
-        fetcher = fetchers.create_fetcher(dataset, collate_fn=collate_fn)
-
-        super().__init__(dataset, sampler, fetcher)
+        super().__init__(dataset, sampler, collate_fn)
 
 
 class ArrayLoader(_types.DataLoader[ArrayOrArrayTuple, ArrayOrArrayTuple]):
