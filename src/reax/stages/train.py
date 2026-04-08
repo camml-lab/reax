@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Final, TypeVar
 import weakref
 
 import beartype
@@ -54,9 +54,9 @@ class Train(stages.EpochStage):
             enable_checkpointing=True,
         )
         # Params
-        self._min_updates = min_updates
-        self._max_updates = max_updates
-        self._accumulate_grad_batches = accumulate_grad_batches
+        self._min_updates: Final[int] = min_updates
+        self._max_updates: Final[int | float | None] = max_updates
+        self._accumulate_grad_batches: Final[int] = accumulate_grad_batches
 
         # State
         self._optimizers = optimizers

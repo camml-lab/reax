@@ -86,6 +86,7 @@ class Stage(abc.ABC):
         self._rngs = rngs if rngs is not None else engine.rngs
         self._warning_cache = rank_zero.WarningCache()
         self._iter = -1
+        self._total_iters = 0
         self._stopper = common.Stopper()
         self._stopper.add_condition(lambda: self._iter >= self._min_iters)
         self._stop_reason: str = ""
@@ -284,6 +285,8 @@ class Stage(abc.ABC):
         """
         # Set ourselves up for the next iteration
         self._iter += 1
+        # Keep track of the total number of iterations, even across multiple executions of this loop
+        self._total_iters += 1
         # if self.should_stop and self._min_iters is not None and self._iter < self._min_iters:
         #     message = "%s `min_iters=%i` has not been met. Stage will continue"
         #     _LOGGER.info(message, self.name, self._min_iters)
@@ -379,7 +382,6 @@ class EpochStage(Stage, abc.ABC):
         self._iterator = None
         self._batch: Any | None = None
         self._next_batch: Any | None = None
-        self._total_batch_idx: int = 0
         self._metrics: "reax.results.ResultCollection | None" = None
         self._metrics_results: "reax.stages.MetricResults | None" = None
         self._outputs = None
@@ -411,7 +413,7 @@ class EpochStage(Stage, abc.ABC):
     @property
     def total_batch_idx(self) -> int:
         """Get the current batch index when counting over all executions of this loop."""
-        return self._total_batch_idx
+        return self._total_iters
 
     @property
     def epoch(self) -> int:
@@ -446,10 +448,16 @@ class EpochStage(Stage, abc.ABC):
     @property
     def listener_metrics(self) -> "reax.types.MetricsDict":
         """Get the metrics available to listeners."""
-        if not self._metrics_results:
-            return dict()
+        if self._parent is not None:
+            metrics = getattr(self._parent, "listener_metrics", {})
+        else:
+            metrics = {}
 
-        return self.results[keys.LISTENER]
+        if self.metrics:
+            # Note: any identical keys will be overwritten by the child (i.e. us)
+            metrics.update(self.results[keys.LISTENER])
+
+        return metrics
 
     @property
     def logged_metrics(self) -> "reax.types.MetricsDict":
@@ -553,10 +561,18 @@ class EpochStage(Stage, abc.ABC):
         """On iteration finished."""
         super()._on_iteration_finished(outputs)
 
-        # Prefetch the next batch (if there is one).  This allows for pipelining i.e. the GPU keeps
-        # working on the model, while we (the CPU), fetch and process the next batch
-        # We then process the metrics and other things that may require a synchronisation
-        self._fetch_next_batch()
+        # If this is not the last batch then get the next bach ready for starting the stage
+        if (
+            self.max_batches is not None
+            and self.batch_idx < self.max_batches
+            and not self._stopper.do_stop()
+        ):
+            # Prefetch the next batch (if there is one).  This allows for pipelining i.e. the GPU
+            # keeps  working on the model, while we (the CPU), fetch and process the next batch
+            # We then process the metrics and other things that may require a synchronisation
+            self._fetch_next_batch()
+        else:
+            self._next_batch = None  # Done
 
         metrics = {keys.PBAR: {}, keys.LOG: {}, keys.LISTENER: {}}
         for _name, entry in self.metrics.items():
@@ -570,9 +586,6 @@ class EpochStage(Stage, abc.ABC):
 
         # Convert tensors to python scalars
         self._metrics_results = metrics
-
-        # Keep track of the total number of batches, even across multiple executions of this loop
-        self._total_batch_idx += 1
 
     @override
     def _on_stopping(self) -> None:

@@ -1,6 +1,8 @@
 from typing import TYPE_CHECKING, Any
 import weakref
 
+import beartype
+import jaxtyping as jt
 from typing_extensions import override
 
 from . import stages
@@ -13,6 +15,7 @@ __all__ = ("Validate",)
 
 
 class Validate(stages.EpochStage):
+    @jt.jaxtyped(typechecker=beartype.beartype)
     def __init__(
         self,
         module: "reax.Module",
@@ -25,6 +28,12 @@ class Validate(stages.EpochStage):
         enable_checkpointing: bool = True,
     ):
         """Init function."""
+        if getattr(module, "validation_step") is None:
+            raise RuntimeError(
+                f"Cannot perform validation as the module '{type(module).__name__}' does not "
+                f"define validation_step()"
+            )
+
         super().__init__(
             name,
             module,

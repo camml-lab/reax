@@ -37,6 +37,7 @@ import logging
 import os
 import pathlib
 import re
+import shutil
 import time
 from typing import TYPE_CHECKING, Final, Literal
 import weakref
@@ -132,7 +133,7 @@ class ModelCheckpoint(checkpointer.Checkpointer):
         train_time_interval: datetime.timedelta | None = None,
         every_n_epochs: int | None = None,
         save_on_train_epoch_end: bool | None = None,
-        save_last: bool | None = None,
+        save_last: bool | Literal["link"] | None = None,
         save_top_k: int = 1,
         save_weights_only: bool = False,
         enable_version_counter: bool = True,
@@ -289,7 +290,7 @@ class ModelCheckpoint(checkpointer.Checkpointer):
         self._auto_insert_metric_name: Final[bool] = auto_insert_metric_name
         self._save_on_train_epoch_end: Final[int | None] = save_on_train_epoch_end
         self._enable_version_counter: Final[bool] = enable_version_counter
-        self._save_last: Final[bool | None] = save_last
+        self._save_last: Final[bool | Literal["link"] | None] = save_last
         self._save_top_k: Final[int] = save_top_k
         self._save_weights_only: Final[bool] = save_weights_only
         self.filename: str | None = filename
@@ -418,18 +419,16 @@ class ModelCheckpoint(checkpointer.Checkpointer):
         """On train epoch end."""
         if not self._should_skip_saving_checkpoint(
             trainer, stage
-        ) and self._should_save_on_train_epoch_end(stage):
+        ) and self._should_save_on_train_epoch_end(trainer, stage):
             if isinstance(stage, stages.Train):
                 self._do_save(trainer, self._monitor_candidates(stage, trainer))
 
     @override
-    def on_validation_epoch_end(
-        self, trainer: "reax.Trainer", stage: "reax.stages.Validate", /
-    ) -> None:
+    def on_validation_end(self, trainer: "reax.Trainer", stage: "reax.stages.Validate", /) -> None:
         """On validation epoch end."""
         if not self._should_skip_saving_checkpoint(
             trainer, stage
-        ) and not self._should_save_on_train_epoch_end(stage):
+        ) and not self._should_save_on_train_epoch_end(trainer, stage):
             if isinstance(stage, stages.Validate):
                 self._do_save(trainer, self._monitor_candidates(stage, trainer))
 
@@ -438,8 +437,13 @@ class ModelCheckpoint(checkpointer.Checkpointer):
     ) -> dict[str, jax.Array]:
         """Monitor candidates."""
         monitor_candidates: dict = copy.deepcopy(stage.listener_metrics)
-        monitor_candidates.setdefault("epoch", trainer.current_epoch)
-        monitor_candidates.setdefault("step", trainer.global_updates)
+
+        monitor_candidates["epoch"] = as_jax_int(
+            monitor_candidates.get("epoch", trainer.current_epoch)
+        )
+        monitor_candidates["step"] = as_jax_int(
+            monitor_candidates.get("step", trainer.global_updates)
+        )
         return monitor_candidates
 
     def check_monitor_top_k(self, current: jax.Array | None = None) -> bool:
@@ -480,21 +484,46 @@ class ModelCheckpoint(checkpointer.Checkpointer):
             or self._last_global_step_saved == trainer.global_updates
         )
 
-    def _should_save_on_train_epoch_end(self, stage: stages.EpochStage) -> bool:
-        """Should save on train epoch end."""
+    def _should_save_on_train_epoch_end(
+        self, trainer: "reax.Trainer", stage: "reax.stages.Train | reax.stages.Validate"
+    ) -> bool:
+        """
+        Determines if we should trigger a checkpoint save at the end of a training epoch
+        or defer it until the validation stage completes.
+        """
         if self._save_on_train_epoch_end is not None:
             # Do whatever the user asked for
             return self._save_on_train_epoch_end
 
-        if (
-            stage.parent is not None
-            and isinstance(stage.parent, stages.Fit)
-            and stage.parent.validate is None
-        ):
-            # There is no validation, so save on train end
+        if not isinstance(trainer.stage, stages.Fit):
+            return isinstance(stage, stages.Train)
+
+        fit: stages.Fit = trainer.stage
+        validation_mode = fit.validation_mode
+
+        # 1. If validation is disabled, we must save on the training epoch end.
+        if validation_mode == stages.ValidationMode.OFF:
             return True
 
-        return False
+        # 2. For Step-based or Mid-epoch (Hybrid) validation, always defer.
+        # We want to save the checkpoint *after* the validation metrics are fresh,
+        # which happens inside the validation trigger, not necessarily at the epoch's end.
+        if validation_mode in (
+            stages.ValidationMode.EVERY_N_STEPS,
+            stages.ValidationMode.HYBRID_MID_EPOCH,
+        ):
+            return False
+
+        # 3. Handle infrequent validation (check_val_every_n_epoch > 1).
+        # If the user only validates every 5 epochs, we don't want to enforce
+        # saving on epochs 1, 2, 3, or 4 because the val metrics would be stale.
+        if (fit.check_val_every_n_epoch or 1) != 1:
+            return False
+
+        # 4. Standard End-of-Epoch validation (Every 1 Epoch).
+        # Since training and validation both conclude at the end of the epoch,
+        # saving here is safe and expected.
+        return True
 
     def _save_topk_checkpoint(
         self,
@@ -531,7 +560,10 @@ class ModelCheckpoint(checkpointer.Checkpointer):
 
         # set the last model path before saving because it will be part of the state.
         previous, self.last_model_path = self.last_model_path, filepath
-        self._save_checkpoint(trainer, filepath)
+        if self._save_last == "link" and self._last_checkpoint_saved and self.save_top_k != 0:
+            self._link_checkpoint(trainer, self._last_checkpoint_saved, filepath)
+        else:
+            self._save_checkpoint(trainer, filepath)
 
         if previous and self._should_remove_checkpoint(trainer, previous, filepath):
             os.unlink(previous)
@@ -713,6 +745,21 @@ class ModelCheckpoint(checkpointer.Checkpointer):
 
         return filename
 
+    @staticmethod
+    def _link_checkpoint(trainer: "reax.Trainer", filepath: str, linkpath: str) -> None:
+        if trainer.is_global_zero and os.path.abspath(filepath) != os.path.abspath(linkpath):
+            if os.path.islink(linkpath) or os.path.isfile(linkpath):
+                os.remove(linkpath)
+            elif os.path.isdir(linkpath):
+                shutil.rmtree(linkpath)
+            try:
+                os.symlink(os.path.relpath(filepath, os.path.dirname(linkpath)), linkpath)
+            except OSError:
+                # on Windows, special permissions are required to create symbolic links as a regular
+                # user fall back to copying the file
+                shutil.copy(filepath, linkpath)
+        trainer.strategy.barrier()
+
     def _save_checkpoint(self, trainer: "reax.Trainer", filepath: str) -> None:
         """Save checkpoint."""
         trainer.save_checkpoint(filepath, self._save_weights_only)
@@ -781,3 +828,7 @@ class ModelCheckpoint(checkpointer.Checkpointer):
             ckpt_path = os.path.join(trainer.default_root_dir, "checkpoints")
 
         return ckpt_path
+
+
+def as_jax_int(val) -> jax.Array:
+    return jnp.array(val).astype(jnp.int32)
