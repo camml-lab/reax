@@ -307,8 +307,13 @@ class MlflowLogger(logger.Logger):
             if isinstance(value, str):
                 self._warning_cache.warn(f"Discarding metric with string value {name}={value}.")
                 continue
+
             if isinstance(value, list):
                 self._warning_cache.warn(f"Discarding metric with list value {name}={value}.")
+                continue
+
+            if hasattr(value, "ndim") and value.ndim > 0:
+                self._warning_cache.warn(f"Discarding non scalar metric {name}={value}.")
                 continue
 
             new_k = re.sub("[^a-zA-Z0-9_/. -]+", "", name)
