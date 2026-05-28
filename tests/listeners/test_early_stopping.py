@@ -655,3 +655,39 @@ def test_early_stopping_check_start_epoch(tmp_path):
     # Early stopping requests a stop after epoch 1 (patience=1), but min_epochs=3 defers it,
     # so the last epoch run is index 2
     assert fit.epoch == 2
+
+
+def test_early_stopping_check_start_epoch_param(tmp_path):
+    """Early stopping checks must not run at all before ``check_start_epoch``.
+
+    This is distinct from ``min_epochs``, which lets the checks run -- and patience
+    accumulate -- while merely forbidding the stage from stopping.  With
+    ``check_start_epoch`` the patience counter only starts at the given epoch.
+    """
+
+    class ModelOverrideValidationReturn(boring_classes.BoringModel):
+        @override
+        def on_validation_epoch_end(self, stage: "reax.stages.Train", *_) -> None:
+            self.log("test_val_loss", jnp.array(1.0))
+
+    model = ModelOverrideValidationReturn()
+    early_stop_listener = listeners.EarlyStopping(
+        monitor="test_val_loss",
+        patience=1,
+        check_start_epoch=3,
+        verbose=True,
+    )
+    early_stop_listener._run_early_stopping_check = Mock(
+        wraps=early_stop_listener._run_early_stopping_check
+    )
+
+    trainer = reax.Trainer(
+        default_root_dir=tmp_path,
+        listeners=[early_stop_listener],
+        enable_progress_bar=False,
+    )
+    trainer.fit(model, num_sanity_val_steps=0, max_epochs=5)
+
+    # Epochs 0-2 are below check_start_epoch, so the check is skipped entirely.
+    # It runs at epochs 3 and 4; the loss is flat, so patience=1 trips at the end of 4.
+    assert early_stop_listener._run_early_stopping_check.call_count == 2
