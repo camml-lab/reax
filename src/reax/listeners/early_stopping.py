@@ -106,6 +106,9 @@ class EarlyStopping(hooks.TrainerListener):
         log_rank_zero_only (bool, optional): When set ``True``, logs the
             status of the early stopping listener only for rank 0
             process, defaults to False.
+        check_start_epoch (int, optional): Epoch at which early stopping
+            checks should begin. Checks will not run if the current epoch
+            is strictly less than ``check_start_epoch``, defaults to 0.
 
     Raises:
         MisconfigurationException: If ``mode`` is none of ``"min"`` or
@@ -138,6 +141,7 @@ class EarlyStopping(hooks.TrainerListener):
         divergence_threshold: float | None = None,
         check_on_train_epoch_end: bool = None,
         log_rank_zero_only: bool = False,
+        check_start_epoch: int = 0,
     ):
         # Params
         self._monitor: Final[str] = monitor
@@ -152,6 +156,7 @@ class EarlyStopping(hooks.TrainerListener):
         self.__check_on_train_epoch_end = check_on_train_epoch_end
         self._log_rank_zero_only = log_rank_zero_only
         self._min_delta: Final[float] = min_delta if mode == "max" else -min_delta
+        self._check_start_epoch: Final[int] = check_start_epoch
 
         # State
         self._check_on_train_epoch_end = check_on_train_epoch_end
@@ -175,6 +180,8 @@ class EarlyStopping(hooks.TrainerListener):
 
     def _should_skip_check(self, trainer: "reax.Trainer") -> bool:
         """Should skip check."""
+        if trainer.current_epoch < self._check_start_epoch:
+            return True
         return not isinstance(trainer.stage, stages.Fit) and not trainer.sanity_checking
 
     @override
