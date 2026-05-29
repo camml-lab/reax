@@ -620,3 +620,81 @@ def test_early_stopping_log_info(log_rank_zero_only, process_count, process_inde
         log_mock.assert_called_once_with(expected_log)
     else:
         log_mock.assert_not_called()
+
+
+def test_early_stopping_check_start_epoch(tmp_path):
+    """Test that early stopping checks do not run before `check_start_epoch`."""
+
+    class ModelOverrideValidationReturn(boring_classes.BoringModel):
+        @override
+        def on_validation_epoch_end(self, stage: "reax.stages.Train", *_) -> None:
+            self.log("test_val_loss", jnp.array(1.0))
+
+    model = ModelOverrideValidationReturn()
+    early_stop_listener = listeners.EarlyStopping(
+        monitor="test_val_loss",
+        patience=1,
+        check_start_epoch=3,
+        verbose=True,
+    )
+    early_stop_listener._run_early_stopping_check = Mock(
+        wraps=early_stop_listener._run_early_stopping_check
+    )
+
+    trainer = reax.Trainer(
+        default_root_dir=tmp_path,
+        listeners=[early_stop_listener],
+        enable_progress_bar=False,
+    )
+    trainer.fit(model, num_sanity_val_steps=0, max_epochs=5)
+
+    # Epoch 0: current_epoch=0 < 3 (skipped)
+    # Epoch 1: current_epoch=1 < 3 (skipped)
+    # Epoch 2: current_epoch=2 < 3 (skipped)
+    # Epoch 3: current_epoch=3 >= 3 (not skipped)
+    # Epoch 4: current_epoch=4 >= 3 (not skipped)
+    # Since patience=1 and the loss doesn't improve from Epoch 3 to Epoch 4,
+    # it triggers early stopping at the end of Epoch 4.
+    # Therefore, _run_early_stopping_check should be called exactly 2 times (at epoch 3 and 4).
+    assert early_stop_listener._run_early_stopping_check.call_count == 2
+
+
+def test_early_stopping_max_time(tmp_path):
+    """Test that max_time stops training early and parses formats correctly."""
+    from datetime import timedelta
+
+    from reax.listeners.early_stopping import _parse_max_time
+
+    assert _parse_max_time(timedelta(seconds=15)) == 15.0
+    assert _parse_max_time(1.5) == 5400.0
+    assert _parse_max_time("01:30:00") == 5400.0
+    assert _parse_max_time("30:00") == 1800.0
+    assert _parse_max_time("1:12:00:00") == 129600.0
+    assert _parse_max_time("2.5") == 9000.0
+
+    model = boring_classes.BoringModel()
+    early_stop_listener = listeners.EarlyStopping(
+        monitor="val_loss",
+        patience=3,
+        max_time="00:00:01",  # 1 second
+        strict=False,
+        verbose=True,
+    )
+
+    trainer = reax.Trainer(
+        default_root_dir=tmp_path,
+        listeners=[early_stop_listener],
+        enable_progress_bar=False,
+    )
+
+    start = [100.0]
+
+    def monotonic_mock():
+        start[0] += 0.5
+        return start[0]
+
+    with mock.patch("time.monotonic", side_effect=monotonic_mock):
+        trainer.fit(model, num_sanity_val_steps=0, max_epochs=5)
+
+    # Training should have stopped before all 5 epochs completed due to the 1-second limit
+    assert trainer.current_epoch < 5
