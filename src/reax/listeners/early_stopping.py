@@ -38,7 +38,9 @@ Monitor a metric and stop training when it stops improving.
 """
 
 from collections.abc import Callable
+import datetime
 import logging
+import time
 from typing import TYPE_CHECKING, Final, Literal
 
 import beartype
@@ -58,6 +60,31 @@ _LOGGER = logging.getLogger(__name__)
 __all__ = ("EarlyStopping",)
 
 MonitorOp = Callable[[jax.typing.ArrayLike, jax.typing.ArrayLike], jax.typing.ArrayLike]
+
+
+def _parse_max_time(max_time: datetime.timedelta | float | str | None) -> float | None:
+    if max_time is None:
+        return None
+    if isinstance(max_time, datetime.timedelta):
+        return max_time.total_seconds()
+    if isinstance(max_time, (int, float)):
+        return float(max_time) * 3600.0
+    if isinstance(max_time, str):
+        if ":" not in max_time:
+            try:
+                return float(max_time) * 3600.0
+            except ValueError:
+                pass
+        parts = list(map(int, max_time.split(":")))
+        if len(parts) == 2:  # MM:SS
+            return parts[0] * 60.0 + parts[1]
+        elif len(parts) == 3:  # HH:MM:SS
+            return parts[0] * 3600.0 + parts[1] * 60.0 + parts[2]
+        elif len(parts) == 4:  # DD:HH:MM:SS
+            return parts[0] * 86400.0 + parts[1] * 3600.0 + parts[2] * 60.0 + parts[3]
+        else:
+            raise ValueError(f"Invalid max_time format string: {max_time}")
+    raise TypeError(f"Invalid max_time type: {type(max_time)}")
 
 
 class EarlyStopping(hooks.TrainerListener):
@@ -109,6 +136,10 @@ class EarlyStopping(hooks.TrainerListener):
         check_start_epoch (int, optional): Epoch at which early stopping
             checks should begin. Checks will not run if the current epoch
             is strictly less than ``check_start_epoch``, defaults to 0.
+        max_time (Union[datetime.timedelta, float, str], optional): Maximum time
+            allowed for training. Can be a ``datetime.timedelta``, a float
+            representing hours, or a string like "HH:MM:SS". If exceeded,
+            training stops gracefully, defaults to None.
 
     Raises:
         MisconfigurationException: If ``mode`` is none of ``"min"`` or
@@ -142,6 +173,7 @@ class EarlyStopping(hooks.TrainerListener):
         check_on_train_epoch_end: bool = None,
         log_rank_zero_only: bool = False,
         check_start_epoch: int = 0,
+        max_time: datetime.timedelta | float | str | None = None,
     ):
         # Params
         self._monitor: Final[str] = monitor
@@ -157,12 +189,15 @@ class EarlyStopping(hooks.TrainerListener):
         self._log_rank_zero_only = log_rank_zero_only
         self._min_delta: Final[float] = min_delta if mode == "max" else -min_delta
         self._check_start_epoch: Final[int] = check_start_epoch
+        self._max_time = max_time
+        self._max_time_seconds = _parse_max_time(max_time)
 
         # State
         self._check_on_train_epoch_end = check_on_train_epoch_end
         self._best_score = float("inf")
         self._wait_count: int = 0
         self._stopped_epoch = 0
+        self._start_time = None
 
     @property
     def monitor_op(self) -> MonitorOp:
@@ -180,6 +215,8 @@ class EarlyStopping(hooks.TrainerListener):
 
     def _should_skip_check(self, trainer: "reax.Trainer") -> bool:
         """Should skip check."""
+        if trainer.should_stop:
+            return True
         if trainer.current_epoch < self._check_start_epoch:
             return True
         return not isinstance(trainer.stage, stages.Fit) and not trainer.sanity_checking
@@ -187,6 +224,7 @@ class EarlyStopping(hooks.TrainerListener):
     @override
     def on_fit_start(self, _trainer: "reax.Trainer", stage: "reax.stages.Fit", /) -> None:
         """On fit start."""
+        self._start_time = time.monotonic()
         if self.__check_on_train_epoch_end is None:
             # if the user runs validation multiple times per training epoch or multiple training
             # epochs without validation, then we run after validation instead of on train epoch end
@@ -195,8 +233,16 @@ class EarlyStopping(hooks.TrainerListener):
             )
 
     @override
+    def on_train_batch_end(
+        self, trainer: "reax.Trainer", stage: "reax.stages.Train", /, *_
+    ) -> None:
+        """On train batch end."""
+        self._check_time_limit(trainer)
+
+    @override
     def on_train_epoch_end(self, trainer: "reax.Trainer", stage: "reax.stages.Train", /) -> None:
         """On train epoch end."""
+        self._check_time_limit(trainer)
         if not self._check_on_train_epoch_end or self._should_skip_check(trainer):
             return
         self._run_early_stopping_check(trainer, stage)
@@ -204,9 +250,27 @@ class EarlyStopping(hooks.TrainerListener):
     @override
     def on_validation_end(self, trainer: "reax.Trainer", stage: "reax.stages.Validate", /) -> None:
         """On validation end."""
+        self._check_time_limit(trainer)
         if self._check_on_train_epoch_end or self._should_skip_check(trainer):
             return
         self._run_early_stopping_check(trainer, stage)
+
+    def _check_time_limit(self, trainer: "reax.Trainer") -> None:
+        """Check if max_time limit has been reached and stop trainer if so."""
+        if self._max_time_seconds is None or self._start_time is None:
+            return
+        if not isinstance(trainer.stage, stages.Fit) or trainer.sanity_checking:
+            return
+
+        elapsed = time.monotonic() - self._start_time
+        if elapsed >= self._max_time_seconds:
+            trainer.should_stop = True
+            if self._verbose:
+                self._log_info(
+                    trainer,
+                    f"Max training time limit of {self._max_time} reached. Signaling Trainer to stop.",
+                    self._log_rank_zero_only,
+                )
 
     def _run_early_stopping_check(
         self, trainer: "reax.Trainer", stage: "reax.stages.EpochStage"

@@ -657,3 +657,44 @@ def test_early_stopping_check_start_epoch(tmp_path):
     # it triggers early stopping at the end of Epoch 4.
     # Therefore, _run_early_stopping_check should be called exactly 2 times (at epoch 3 and 4).
     assert early_stop_listener._run_early_stopping_check.call_count == 2
+
+
+def test_early_stopping_max_time(tmp_path):
+    """Test that max_time stops training early and parses formats correctly."""
+    from datetime import timedelta
+
+    from reax.listeners.early_stopping import _parse_max_time
+
+    assert _parse_max_time(timedelta(seconds=15)) == 15.0
+    assert _parse_max_time(1.5) == 5400.0
+    assert _parse_max_time("01:30:00") == 5400.0
+    assert _parse_max_time("30:00") == 1800.0
+    assert _parse_max_time("1:12:00:00") == 129600.0
+    assert _parse_max_time("2.5") == 9000.0
+
+    model = boring_classes.BoringModel()
+    early_stop_listener = listeners.EarlyStopping(
+        monitor="val_loss",
+        patience=3,
+        max_time="00:00:01",  # 1 second
+        strict=False,
+        verbose=True,
+    )
+
+    trainer = reax.Trainer(
+        default_root_dir=tmp_path,
+        listeners=[early_stop_listener],
+        enable_progress_bar=False,
+    )
+
+    start = [100.0]
+
+    def monotonic_mock():
+        start[0] += 0.5
+        return start[0]
+
+    with mock.patch("time.monotonic", side_effect=monotonic_mock):
+        trainer.fit(model, num_sanity_val_steps=0, max_epochs=5)
+
+    # Training should have stopped before all 5 epochs completed due to the 1-second limit
+    assert trainer.current_epoch < 5
