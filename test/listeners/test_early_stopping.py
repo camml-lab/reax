@@ -620,3 +620,29 @@ def test_early_stopping_log_info(log_rank_zero_only, process_count, process_inde
         log_mock.assert_called_once_with(expected_log)
     else:
         log_mock.assert_not_called()
+
+
+def test_early_stopping_check_start_epoch(tmp_path):
+    """Test that early stopping checks do not run before `check_start_epoch`."""
+
+    class ModelOverrideValidationReturn(boring_classes.BoringModel):
+        @override
+        def on_validation_epoch_end(self, stage: "reax.stages.Train", *_) -> None:
+            self.log("test_val_loss", jnp.array(1.0))
+
+    model = ModelOverrideValidationReturn()
+    early_stop_listener = listeners.EarlyStopping(monitor="test_val_loss", patience=1, verbose=True)
+    early_stop_listener._run_early_stopping_check = Mock(
+        wraps=early_stop_listener._run_early_stopping_check
+    )
+
+    trainer = reax.Trainer(
+        default_root_dir=tmp_path,
+        listeners=[early_stop_listener],
+        enable_progress_bar=False,
+    )
+    fit = trainer.fit(model, num_sanity_val_steps=0, min_epochs=3, max_epochs=5)
+
+    # Epochs starts at zero so early stopping should stop after 3 (min) + 1 (patience) epochs
+    # i.e. epoch number 3
+    assert fit.epoch == 3
