@@ -136,7 +136,7 @@ class EarlyStopping(hooks.TrainerListener):
         check_finite: bool = True,
         stopping_threshold: float | None = None,
         divergence_threshold: float | None = None,
-        check_on_train_epoch_end: bool = None,
+        check_on_train_epoch_end: bool | None = None,
         log_rank_zero_only: bool = False,
     ):
         # Params
@@ -215,9 +215,9 @@ class EarlyStopping(hooks.TrainerListener):
         should_stop, reason = self._evaluate_stopping_criteria(current)
 
         # stop every ddp process if any process decides to stop
-        # should_stop = trainer.strategy.reduce_boolean_decision(should_stop, all=False)
-        trainer.should_stop = trainer.should_stop or should_stop
+        should_stop = trainer.strategy.all_reduce(jnp.array(should_stop), reduce_op="logical_or")
         if should_stop:
+            trainer.should_stop = should_stop
             self._stopped_epoch = trainer.current_epoch
         if reason and self._verbose:
             self._log_info(trainer, reason, self._log_rank_zero_only)

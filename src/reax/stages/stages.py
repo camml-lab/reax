@@ -190,7 +190,7 @@ class Stage(abc.ABC):
     def step(self) -> None:
         """Advance the loop by one iteration."""
         try:
-            if self._iter == -1:
+            if self.state != StageState.RUNNING:
                 # Starting
                 self._on_starting()
                 self.events.fire_event(common.StageListener.on_stage_start, weakref.proxy(self))
@@ -295,7 +295,6 @@ class Stage(abc.ABC):
     def _on_stopping(self):
         """The stage is stopping."""
         self._state = StageState.FINISHED
-        self._iter = -1
         self._run_count += 1
 
     def _on_stopped(self):
