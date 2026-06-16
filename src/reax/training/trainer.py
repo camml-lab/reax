@@ -20,6 +20,7 @@ from .. import _engine as engine_
 from .. import data, exceptions, hooks, keys
 from .. import listeners as listeners_
 from .. import loggers as loggers_
+from .. import metrics as metrics_
 from .. import modules, stages, strategies
 from ..utils import events
 
@@ -57,6 +58,7 @@ class Trainer(stages.StageListener, _deprecated.TrainerDeprecatedMixin):
         default_root_dir: "reax.types.Path | None" = None,
         checkpointing: "reax.Checkpointing | None" = None,
         profiler: "reax.Profiler | None" = None,
+        metric_evaluator: "reax.metrics.MetricEvaluator | None" = None,
     ):
         """Init function."""
         # Params
@@ -68,6 +70,10 @@ class Trainer(stages.StageListener, _deprecated.TrainerDeprecatedMixin):
         self._automatic_optimization = True
         self._optimizers = []
         self._stage: stages.Stage | None = None
+
+        self._metric_evaluator = (
+            metric_evaluator if metric_evaluator is not None else metrics_.DefaultEvaluator()
+        )
 
         # State
         self._engine = engine_.Engine(
@@ -186,6 +192,11 @@ class Trainer(stages.StageListener, _deprecated.TrainerDeprecatedMixin):
     def optimizers(self, opts: list["reax.Optimizer"]) -> None:
         """Optimizers function."""
         self._optimizers = opts
+
+    @property
+    def metric_evaluator(self) -> "reax.metrics.MetricEvaluator":
+        """Get the metric evaluator."""
+        return self._metric_evaluator
 
     @property
     def should_stop(self) -> bool:
