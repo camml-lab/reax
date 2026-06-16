@@ -637,9 +637,7 @@ def test_early_stopping_check_start_epoch(tmp_path):
     )
 
     trainer = reax.Trainer(
-        default_root_dir=tmp_path,
-        listeners=[early_stop_listener],
-        enable_progress_bar=False,
+        default_root_dir=tmp_path, listeners=[early_stop_listener], enable_progress_bar=False
     )
     fit = trainer.fit(model, num_sanity_val_steps=0, min_epochs=3, max_epochs=5)
 
