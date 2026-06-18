@@ -20,7 +20,6 @@ from .. import _engine as engine_
 from .. import data, exceptions, hooks, keys
 from .. import listeners as listeners_
 from .. import loggers as loggers_
-from .. import metrics as metrics_
 from .. import modules, stages, strategies
 from ..utils import events
 
@@ -71,10 +70,6 @@ class Trainer(stages.StageListener, _deprecated.TrainerDeprecatedMixin):
         self._optimizers = []
         self._stage: stages.Stage | None = None
 
-        self._metric_evaluator = (
-            metric_evaluator if metric_evaluator is not None else metrics_.DefaultEvaluator()
-        )
-
         # State
         self._engine = engine_.Engine(
             accelerator,
@@ -87,6 +82,7 @@ class Trainer(stages.StageListener, _deprecated.TrainerDeprecatedMixin):
             rngs=rngs,
             default_root_dir=default_root_dir,
             profiler=profiler,
+            metric_evaluator=metric_evaluator,
         )
 
         self._current_epoch: int = 0
@@ -196,7 +192,7 @@ class Trainer(stages.StageListener, _deprecated.TrainerDeprecatedMixin):
     @property
     def metric_evaluator(self) -> "reax.metrics.MetricEvaluator":
         """Get the metric evaluator."""
-        return self._metric_evaluator
+        return self._engine.metric_evaluator
 
     @property
     def should_stop(self) -> bool:
@@ -598,6 +594,11 @@ class Trainer(stages.StageListener, _deprecated.TrainerDeprecatedMixin):
         datamanager = self._create_data_manager(
             datamodule=datamodule, **{dataset_name: dataloaders}
         )
+
+        evaluator = (
+            metric_evaluator if metric_evaluator is not None else self.engine.metric_evaluator
+        )
+
         eval_stats = stages.EvaluateStats(
             stats,
             datamanager,
@@ -605,7 +606,7 @@ class Trainer(stages.StageListener, _deprecated.TrainerDeprecatedMixin):
             rngs=self.rngs,
             dataset_name=dataset_name,
             limit_batches=limit_batches,
-            evaluator=metric_evaluator,
+            evaluator=evaluator,
         )
         self._run_stage(eval_stats)
 

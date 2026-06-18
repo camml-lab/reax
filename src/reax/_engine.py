@@ -14,6 +14,7 @@ import jaxtyping as jt
 from . import data as data_
 from . import hooks
 from . import loggers as loggers_
+from . import metrics as metrics_
 from . import modules, optimizers, profilers, strategies
 from .data import DeviceDataLoader
 from .training import _logger_connector
@@ -63,6 +64,7 @@ class Engine:
         rngs: nnx.Rngs = None,
         default_root_dir: "reax.types.Path | None" = None,
         profiler: "reax.Profiler | str | None" = None,
+        metric_evaluator: "reax.MetricEvaluator | None" = None,
     ):
         """
         Initializes the Engine with execution parameters and components.
@@ -120,6 +122,10 @@ class Engine:
         if listeners:
             for listener in listeners:
                 self._events.add_listener(listener)
+
+        self._metric_evaluator = (
+            metric_evaluator if metric_evaluator is not None else metrics_.DefaultEvaluator()
+        )
 
     def finalize(self):
         """Clean up the trainer.
@@ -209,6 +215,11 @@ class Engine:
     def profile(self, profile_name: str, **kwargs):
         with self._profiler.profile(profile_name, **kwargs):
             yield self.profiler
+
+    @property
+    def metric_evaluator(self) -> "reax.metrics.MetricEvaluator":
+        """Get the metric evaluator."""
+        return self._metric_evaluator
 
     @property
     def is_global_zero(self) -> bool:
