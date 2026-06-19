@@ -28,14 +28,14 @@ class EvaluateStats(stages.EpochStage):
         self,
         stats: "reax.Metric | Sequence[reax.Metric] | dict[str, reax.Metric]",
         datamanager: "reax.data.DataSourceManager",
-        engine: "reax.Engine | None",
+        engine: "reax.Engine",
         *,
         rngs: nnx.Rngs,
         dataset_name: str = "train",
         fast_dev_run: bool | int = False,
         limit_batches: int | float | None = None,
         ignore_missing=False,
-        evaluator: "reax.metrics.MetricEvaluator" = None,
+        evaluator: "reax.metrics.MetricEvaluator | None" = None,
     ):
         """Init function."""
         super().__init__(
@@ -50,18 +50,23 @@ class EvaluateStats(stages.EpochStage):
         )
 
         # Params
-        evaluator = evaluator if evaluator is not None else metrics.DefaultEvaluator()
-        self._stats = metrics.MetricCollection(stats, evaluator)
+        self._evaluator = evaluator
+        self._stats = stats
         self._ignore_missing = ignore_missing
 
     @override
     def _step(self) -> None:
         """Step function."""
+        evaluator = (
+            self._evaluator if self._evaluator is not None else self._engine.metric_evaluator
+        )
+        collection = metrics.MetricCollection(self._stats, evaluator)
+
         # Calculate...
         if isinstance(self.batch, tuple):
-            calculated = self._stats.create(*self.batch, ignore_missing=self._ignore_missing)
+            calculated = collection.create(*self.batch, ignore_missing=self._ignore_missing)
         else:
-            calculated = self._stats.create(self.batch, ignore_missing=self._ignore_missing)
+            calculated = collection.create(self.batch, ignore_missing=self._ignore_missing)
 
         # ...and log all the stats
         for name, stat in calculated.items():

@@ -73,6 +73,26 @@ jobs:
       - name: Upload coverage reports to Codecov with GitHub Action
         uses: codecov/codecov-action@v5
 
+  docs-build:
+    name: Build Documentation
+    needs: [ tests ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install -e .[dev]
+          pip install -r docs/requirements.txt
+
+      - name: Build docs and run notebooks
+        run: make -C docs html
+
   publish:
     name: Publish to PyPI
     needs: [ pre-commit, pylint, tests ]

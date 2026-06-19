@@ -6,3 +6,9 @@ API Reference
    :caption: API
 
    core
+   training
+   data
+   metrics
+   loggers
+   profilers
+   listeners

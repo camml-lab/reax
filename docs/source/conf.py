@@ -38,6 +38,7 @@ def get_version(path):
 # The 'module' object now contains the contents of reax/__init__.py
 # For example, to get the version: version = module.__version__
 autoclass_content = "both"
+autosummary_generate = False
 
 # -- General configuration ------------------------------------------------
 
