@@ -247,7 +247,7 @@ class Stage(abc.ABC):
         logger: bool = False,
         on_step=False,
         on_epoch=True,
-        reduce_fx: "reax.types.ReduceFx" = "sum",
+        reduce_fn: "reax.types.ReduceFn" = "mean",
     ) -> None:
         """Log a result while the stage is running."""
 
@@ -499,7 +499,7 @@ class EpochStage(Stage, abc.ABC):
         logger: bool = False,
         on_step=False,
         on_epoch=True,
-        reduce_fx: "reax.types.ReduceFx" = "sum",
+        reduce_fn: "reax.types.ReduceFn" = "mean",
     ) -> None:
         """Log metrics during the current epoch."""
         assert self._batch is not None
@@ -516,7 +516,7 @@ class EpochStage(Stage, abc.ABC):
             batch_idx=self._iter,
             on_step=on_step,
             on_epoch=on_epoch,
-            reduce_fx=reduce_fx,
+            reduce_fn=reduce_fn,
         )
 
     @override
