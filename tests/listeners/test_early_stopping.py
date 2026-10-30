@@ -631,8 +631,8 @@ def test_early_stopping_log_info(log_rank_zero_only, process_count, process_inde
         log_mock.assert_not_called()
 
 
-def test_early_stopping_check_start_epoch(tmp_path):
-    """Test that early stopping checks do not run before `check_start_epoch`."""
+def test_early_stopping_start_from_epoch(tmp_path):
+    """Test that early stopping checks do not run before `start_from_epoch`."""
 
     class ModelOverrideValidationReturn(boring_classes.BoringModel):
         @override
@@ -657,12 +657,12 @@ def test_early_stopping_check_start_epoch(tmp_path):
     assert fit.epoch == 2
 
 
-def test_early_stopping_check_start_epoch_param(tmp_path):
-    """Early stopping checks must not run at all before ``check_start_epoch``.
+def test_early_stopping_start_from_epoch_param(tmp_path):
+    """Early stopping checks must not run at all before ``start_from_epoch``.
 
     This is distinct from ``min_epochs``, which lets the checks run -- and patience
     accumulate -- while merely forbidding the stage from stopping.  With
-    ``check_start_epoch`` the patience counter only starts at the given epoch.
+    ``start_from_epoch`` the patience counter only starts at the given epoch.
     """
 
     class ModelOverrideValidationReturn(boring_classes.BoringModel):
@@ -674,7 +674,7 @@ def test_early_stopping_check_start_epoch_param(tmp_path):
     early_stop_listener = listeners.EarlyStopping(
         monitor="test_val_loss",
         patience=1,
-        check_start_epoch=3,
+        start_from_epoch=3,
         verbose=True,
     )
     early_stop_listener._run_early_stopping_check = Mock(
@@ -688,6 +688,6 @@ def test_early_stopping_check_start_epoch_param(tmp_path):
     )
     trainer.fit(model, num_sanity_val_steps=0, max_epochs=5)
 
-    # Epochs 0-2 are below check_start_epoch, so the check is skipped entirely.
+    # Epochs 0-2 are below start_from_epoch, so the check is skipped entirely.
     # It runs at epochs 3 and 4; the loss is flat, so patience=1 trips at the end of 4.
     assert early_stop_listener._run_early_stopping_check.call_count == 2
